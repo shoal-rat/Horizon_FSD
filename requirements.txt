@@ -1,0 +1,49 @@
+# Horizon FSD - pinned dependencies for Phases 1-4.
+#
+# NOTE: Phase 0 (telemetry_probe.py) needs NONE of these - it is pure stdlib.
+# Install these only when you start Phase 1.
+#
+# Pins verified mutually-compatible as of mid-2026. The binding constraint is
+# stable-baselines3 2.8.0, which requires:  gymnasium >=0.29.1,<1.3.0 ;
+# numpy >=1.20,<3.0 ; torch >=2.3,<3.0.  (So gymnasium must stay on 1.2.x.)
+#
+# Windows-only packages: bettercam, vgamepad (require native Windows; vgamepad
+# also needs the ViGEmBus driver installed first - see README).
+#
+# Recommended interpreter: Python 3.10-3.12. bettercam 1.0.0 and vgamepad 0.1.0
+# are 2023 builds and may lack cp313 wheels; the Phase 0 probe runs on any 3.8+.
+
+# --- RL env + algorithms ---
+gymnasium==1.2.3
+rtgym==0.16
+stable-baselines3==2.8.0
+numpy==2.2.6
+
+# --- Deep learning (GPU) ---
+# IMPORTANT install order to keep the CUDA build: timm REQUIRES torchvision, and a
+# plain `pip install timm` will pull the CPU torch from PyPI and clobber the CUDA one.
+# Install torch+torchvision from the cu126 index FIRST, then timm/tensorboard, e.g.:
+#   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
+#   pip install timm==1.0.27 tensorboard==2.20.0
+# (CPU-only: drop the --index-url.)
+torch==2.11.0
+torchvision==0.26.0
+
+# --- Vision ---
+timm==1.0.27               # requires torchvision
+opencv-python==4.13.0.92
+
+# --- Windows screen capture + virtual gamepad (native Windows only) ---
+# windows-capture (Windows.Graphics.Capture API) replaced bettercam/dxcam: on this
+# project's NVIDIA Optimus + HDR laptop, DXGI Desktop Duplication returned all-black
+# frames and crashed comtypes on Python 3.13. WGC handles HDR + hybrid GPUs.
+windows-capture==2.0.0
+vgamepad==0.1.0
+
+# --- Config / logging / monitoring ---
+pyyaml==6.0.2
+tensorboard==2.20.0
+
+# --- Phase 5 (DreamerV3) is INCOMPATIBLE with the pins above ---
+# sheeprl==0.5.7 requires gymnasium 0.29.* and Python <=3.11.
+# Install it in a SEPARATE virtual environment (see requirements-dreamer note in README).

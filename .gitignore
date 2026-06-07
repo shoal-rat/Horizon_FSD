@@ -1,0 +1,53 @@
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Virtual envs ─────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Vendored external RL code (cloned, not ours) ─────────
+dreamerv3_torch/
+
+# ── Horizon FSD artifacts ────────────────────────────────
+# Recorded driving data (large), checkpoints, logs, captures
+data/
+datasets/
+recordings/
+dreamer_logs/
+line_frames/
+*.npz
+*.npy
+*.webdataset
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+# TensorBoard
+runs/
+logs/
+*.log
+captures/
+*.mp4
+*.jpg
+*.png
+# keep doc images if any
+!docs/**/*.png
+
+# ── Telemetry capture dumps (probe output) ───────────────
+telemetry_dumps/
+*.bin
+
+# ── OS / editor ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

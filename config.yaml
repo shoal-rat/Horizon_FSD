@@ -1,0 +1,114 @@
+# Horizon FSD - central configuration.
+#
+# Phase 0 (telemetry_probe.py) does NOT read this file; it is pure stdlib and
+# takes CLI args. This file documents the intended settings for Phases 1+.
+# Values marked CONFIRM-IN-PHASE-0 depend on what the live FH6 probe shows.
+
+telemetry:
+  host: "0.0.0.0"          # interface to bind the UDP listener on
+  port: 9999               # MUST equal the in-game Data Out port. Avoid 5200-5300 (game-reserved).
+  packet_size: 324         # FH4/5 'Car Dash'. CONFIRM-IN-PHASE-0 against the live FH6 packet length.
+  recv_timeout_s: 1.0
+
+capture:                   # windows-capture (Windows.Graphics.Capture) backend
+  monitor_index: 1         # 1-based monitor (1 = primary); ignored if window_name set
+  window_name: null        # capture a specific window by title (e.g. "Forza Horizon 6"), or null
+  region: null             # [left, top, right, bottom] in captured pixels, or null for full
+  img_width: 84            # downscaled observation width
+  img_height: 84           # downscaled observation height
+  grayscale: true
+  frame_stack: 4           # number of recent frames in the observation stack
+  cursor_capture: false    # include the mouse cursor in frames
+
+env:                       # rtgym real-time loop (mirrors tmrl)
+  time_step_duration: 0.05 # control step in seconds (20 Hz)
+  start_obs_capture: 0.04  # when within the step to grab the observation
+  act_buf_len: 4           # past actions appended to the observation (sensing+actuation delay)
+  ep_max_length: 2000      # truncate episodes after N steps
+
+action:
+  # continuous action = [steer in -1..1, throttle in 0..1, brake in 0..1]
+  steer_range: [-1.0, 1.0]
+  throttle_range: [0.0, 1.0]
+  brake_range: [0.0, 1.0]
+
+reward:
+  # placeholder - reward.py will host swappable functions (Phase 1+).
+  type: "forward_speed"
+
+rl_reward:
+  speed_cap: 40.0
+  progress_scale: 1.0
+  centerline_path: "C:/Horizon_FSD/centerline.npy"
+  progress_max_step: 2.0
+  progress_jump_guard: 5.0
+  route_max_dist: 30.0
+  boot_w: 0.3
+  offroad_rumble: 0.15
+  offroad_w: 2.0
+  slip_deadband: 1.0
+  slip_w: 0.5
+  jerk_w: 0.02
+  spin_w: 0.5
+  spin_deadband: 0.6
+  crash_penalty: 5.0
+  line_follow_w: 0.3
+  idle_speed: 1.0
+  idle_w: 0.05
+  steer_w: 0.01
+  low_speed_steer_w: 0.08
+  low_speed_steer_speed: 5.0
+  brake_w: 0.03
+  launch_w: 0.04
+
+rl_safety:
+  # Runtime guardrails for early live RL. These clamp only the gamepad command,
+  # not the replay action coordinate system.
+  steer_limit: 0.55
+  high_speed_steer_limit: 0.35
+  high_speed_threshold: 15.0
+
+bc:                           # Phase 3 behavioral cloning
+  backbone: "resnet18"        # timm backbone (e.g. resnet18, efficientnet_b0)
+  pretrained: true            # ImageNet-pretrained weights (first conv adapted to 4 chans)
+  freeze_backbone: false      # train only the head if true
+  hidden: 256                 # MLP head width
+  dropout: 0.1
+  epochs: 25
+  batch_size: 128
+  lr: 0.0003
+  weight_decay: 0.0001
+  num_workers: 0              # 0 on Windows (frames already in RAM)
+  speed_norm: 100.0           # divide speed (m/s) by this for the scalar input
+  # --- steering head: classification over bins (0 = old MSE-tanh regression) ---
+  steer_bins: 21              # softmax bins over [-1,1]; stops MSE averaging to straight
+  steer_bin_power: 1.5        # >1 packs bins denser near 0 (fine control near center)
+  # --- loss weighting ---
+  loss_corner_k: 4.0          # per-sample weight = 1 + k*|steer| (emphasize corners)
+  w_steer: 1.0                # weight on steering loss (cross-entropy)
+  w_throttle_brake: 5.0       # weight on throttle/brake MSE (balances vs CE scale)
+  # --- augmentation (recovery via PilotNet-style speed-aware shift) ---
+  aug_flip: true              # random L-R flip (negate steer) - symmetrizes steering
+  aug_brightness: 0.2         # +/- brightness jitter fraction
+  aug_shift_px: 8             # max horizontal shift (px); sampled ~N(0,sigma), most small
+  aug_shift_sigma: 4.0        # std of the shift distribution (mass near 0 = small offsets)
+  aug_steer_per_px: 0.02      # base steer correction per shifted pixel
+  aug_speed_ref: 20.0         # m/s: correction scaled by speed_ref/speed (gentler when fast)
+  aug_speed_min: 5.0          # m/s floor so low-speed correction doesn't blow up
+
+dataset:                      # Phase 2 BC dataset filtering/balancing
+  frame_stack: 4              # frames per stacked sample (match capture.frame_stack)
+  min_speed: 1.0              # drop frames slower than this (m/s) - parked/idle
+  crash_speed_drop: 3.0       # speed drop (m/s) within one 0.05s step => impact
+  crash_accel: 60.0           # |acceleration| (m/s^2) spike => impact (normal p99~19)
+  crash_window: 8             # frames dropped on each side of an impact (~0.4s)
+  max_tire_slip: 8.0          # drop frames with extreme wheelspin/slide (keeps dirt driving)
+  straight_steer_thresh: 0.05 # |steer| below this = "straight"
+  max_straight_frac: 0.5      # straights at most this fraction after balancing
+  val_frac: 0.1               # last fraction of each session (by time) => validation
+  autodrive_surface_rumble: 0.15  # extra off-road filter, autodrive-quality sessions only
+
+paths:
+  recordings_dir: "C:/Horizon_FSD/recordings"
+  checkpoints_dir: "C:/Horizon_FSD/checkpoints"
+  tensorboard_dir: "C:/Horizon_FSD/runs"
