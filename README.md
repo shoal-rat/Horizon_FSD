@@ -1,5 +1,16 @@
 # Horizon FSD
 
+<p align="center">
+  <img src="docs/assets/horizon-fsd-hero.svg" alt="Horizon FSD hero banner" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/shoal-rat/Horizon_FSD/releases"><img alt="release" src="https://img.shields.io/github/v/release/shoal-rat/Horizon_FSD?include_prereleases&style=for-the-badge"></a>
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows-2563eb?style=for-the-badge">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10--3.13-0f766e?style=for-the-badge">
+  <img alt="mode" src="https://img.shields.io/badge/scope-Offline%20Solo-f59e0b?style=for-the-badge">
+</p>
+
 Vision-based self-driving experiments for Forza Horizon 6 on Windows.
 
 Horizon FSD wraps the game as a real-time reinforcement-learning environment:
@@ -11,6 +22,15 @@ warm-start replay, live recovery, and AutoDrive recovery demonstrations.
 This repository is public for research and reproducibility. It does not include
 recorded driving data, checkpoints, replay buffers, the Python virtual
 environment, or the vendored DreamerV3 checkout.
+
+## Quick Links
+
+- [DreamerV3 integration](docs/dreamer_integration.md)
+- [Driving RL notes](docs/driving_rl_lessons.md)
+- [Telemetry format](docs/telemetry_format.md)
+- [Release notes](CHANGELOG.md)
+- [Recovery strategy](#recovery-strategy)
+- [Training workflow](#training-workflow)
 
 ## Safety And Scope
 
@@ -38,6 +58,17 @@ environment, or the vendored DreamerV3 checkout.
 - AutoDrive recovery demonstrations:
   - smooth non-teleport recoveries are saved as Dreamer replay episodes
   - teleport/prompt recoveries are used for safety but not learned as dynamics
+
+## Visual Overview
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="Horizon FSD architecture diagram" width="100%">
+</p>
+
+The project is intentionally built around observable I/O: screen capture,
+telemetry, and controller input. DreamerV3 learns from warm-start replay and live
+episodes, while recovery demonstrations add examples of returning from off-route
+states.
 
 ## Repository Layout
 
@@ -210,6 +241,10 @@ If memory is still tight, pass smaller Dreamer overrides, for example:
 
 ## Recovery Strategy
 
+<p align="center">
+  <img src="docs/assets/recovery-loop.svg" alt="AutoDrive recovery and learning loop" width="100%">
+</p>
+
 Forza reset/respawn can place the car on nearby flat ground rather than the
 target road. This project therefore treats reset button presses as attempts, not
 success. A recovered state must be live, upright, low-rumble, and close to the
@@ -244,6 +279,17 @@ Key blocks in `config.yaml`:
 - `rl_safety`: early-training steering clamps.
 - `reset`: rewind, AutoDrive, route verification and persistent recovery.
 - `recovery_demos`: whether to save smooth AutoDrive recoveries into replay.
+
+## Project Notes
+
+- `centerline.npy` is local and ignored. Build your own from a clean route
+  recording.
+- `dreamerv3_torch/` is local and ignored. Recreate it with the vendor restore
+  commands above.
+- Recovery demonstrations are not magic teleports. The recorder discards
+  coordinate jumps and keeps only smooth AutoDrive escape behavior.
+- For public clones, expect to spend time tuning `config.yaml` for monitor,
+  Data Out port, capture source, GPU budget and chosen route.
 
 ## Public Repo Notes
 

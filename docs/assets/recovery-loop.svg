@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" role="img" aria-labelledby="title desc">
+  <title id="title">AutoDrive recovery and learning loop</title>
+  <desc id="desc">The recovery ladder detects impact, stuck, flipped, or off-road states, tries rewind and AutoDrive, accepts teleport prompts for safety, saves smooth recovery demos, and resumes training only after telemetry verification.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c1222"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="safe" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="warn" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#fb7185"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#9fb6c5"/>
+    </marker>
+    <style>
+      .title { font: 800 32px "Segoe UI", Arial, sans-serif; fill: #f8fafc; }
+      .nodeTitle { font: 800 18px "Segoe UI", Arial, sans-serif; fill: #f8fafc; }
+      .text { font: 500 14px "Segoe UI", Arial, sans-serif; fill: #cbd5e1; }
+      .mono { font: 600 13px "Cascadia Mono", Consolas, monospace; fill: #e0f2fe; }
+      .node { fill: rgba(15,23,42,.9); stroke: rgba(148,163,184,.34); stroke-width: 1.2; }
+      .ok { stroke: #34d399; }
+      .bad { stroke: #fb7185; }
+      .flow { fill: none; stroke: #9fb6c5; stroke-width: 2.6; marker-end: url(#arrow); }
+      .soft { fill: none; stroke: rgba(148,163,184,.32); stroke-width: 2; stroke-dasharray: 6 8; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1180" height="560" rx="24" fill="url(#bg)"/>
+  <text class="title" x="44" y="54">Recovery Is A Safety Net And A Teacher</text>
+  <text class="text" x="46" y="84">Teleport is allowed for safety; only smooth AutoDrive escape behavior becomes replay.</text>
+
+  <g transform="translate(50 142)">
+    <rect class="node bad" x="0" y="0" width="210" height="104" rx="18"/>
+    <circle cx="38" cy="38" r="18" fill="url(#warn)"/>
+    <path d="M30 30 L46 46 M46 30 L30 46" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+    <text class="nodeTitle" x="72" y="34">Episode Ends</text>
+    <text class="text" x="72" y="60">impact / stuck / flip</text>
+    <text class="text" x="72" y="82">off-route slow state</text>
+  </g>
+
+  <g transform="translate(330 118)">
+    <rect class="node" x="0" y="0" width="220" height="124" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">Try Rewind</text>
+    <text class="text" x="24" y="66">best for fresh impact</text>
+    <text class="text" x="24" y="90">quickly backs out</text>
+    <text class="mono" x="24" y="112">Y -> settle -> A</text>
+  </g>
+
+  <g transform="translate(630 118)">
+    <rect class="node" x="0" y="0" width="240" height="124" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">ANNA AutoDrive</text>
+    <text class="text" x="24" y="66">route-aware recovery</text>
+    <text class="text" x="24" y="90">waits or accepts prompt</text>
+    <text class="mono" x="24" y="112">Down -> Left -> A</text>
+  </g>
+
+  <g transform="translate(940 96)">
+    <rect class="node bad" x="0" y="0" width="190" height="150" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">Teleport Prompt</text>
+    <text class="text" x="24" y="66">accept for safety</text>
+    <text class="text" x="24" y="90">discard as replay</text>
+    <text class="mono" x="24" y="118">coordinate jump</text>
+  </g>
+
+  <g transform="translate(632 324)">
+    <rect class="node ok" x="0" y="0" width="238" height="126" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">Smooth Escape</text>
+    <text class="text" x="24" y="66">continuous coordinates</text>
+    <text class="text" x="24" y="90">telemetry action labels</text>
+    <text class="mono" x="24" y="112">save recovery-*.npz</text>
+  </g>
+
+  <g transform="translate(330 326)">
+    <rect class="node ok" x="0" y="0" width="220" height="122" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">Verified Route</text>
+    <text class="text" x="24" y="66">live + upright</text>
+    <text class="text" x="24" y="90">low rumble + centerline</text>
+  </g>
+
+  <g transform="translate(50 326)">
+    <rect class="node" x="0" y="0" width="210" height="122" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">Resume Training</text>
+    <text class="text" x="24" y="66">new episode starts</text>
+    <text class="text" x="24" y="90">policy keeps learning</text>
+  </g>
+
+  <g transform="translate(940 332)">
+    <rect class="node bad" x="0" y="0" width="190" height="118" rx="18"/>
+    <text class="nodeTitle" x="24" y="36">Escalate</text>
+    <text class="text" x="24" y="66">if still wedged</text>
+    <text class="text" x="24" y="90">force reset position</text>
+  </g>
+
+  <path class="flow" d="M260 194 H330"/>
+  <path class="flow" d="M550 180 H630"/>
+  <path class="flow" d="M870 180 H940"/>
+  <path class="flow" d="M748 242 V324"/>
+  <path class="flow" d="M632 386 H550"/>
+  <path class="flow" d="M330 387 H260"/>
+  <path class="soft" d="M1035 246 V332"/>
+  <path class="soft" d="M940 390 H870"/>
+  <path class="soft" d="M760 450 C760 506 206 504 155 448"/>
+
+  <text class="mono" x="277" y="176">detected</text>
+  <text class="mono" x="574" y="162">if needed</text>
+  <text class="mono" x="884" y="162">prompt?</text>
+  <text class="mono" x="772" y="292">no jump</text>
+  <text class="mono" x="445" y="372">gate</text>
+  <text class="mono" x="83" y="496">demonstrations join replay; teleport only keeps the run alive</text>
+</svg>
