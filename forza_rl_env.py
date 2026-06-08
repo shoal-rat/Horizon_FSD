@@ -26,7 +26,7 @@ from capture import ScreenCapture
 from config import load_config
 from gamepad import ForzaGamepad
 from racing_line import LineReading, RacingLineReader
-from recovery import CrashDetector, ForzaResetter
+from recovery import CrashDetector, ForzaResetter, ResetConfig
 from reward import DriveReward, DriveRewardConfig
 from telemetry_receiver import TelemetryReceiver
 
@@ -55,7 +55,7 @@ class ForzaDriveEnv:
         self.rx.start()
         self.gamepad = ForzaGamepad()
         self.detector = CrashDetector()
-        self.resetter = ForzaResetter(self.gamepad, self.rx)
+        self.resetter = ForzaResetter(self.gamepad, self.rx, ResetConfig(**cfg.get("reset", {})))
         self.reward_fn = DriveReward(DriveRewardConfig(**cfg.get("rl_reward", {})))
         safety = cfg.get("rl_safety", {})
         self.steer_limit = float(safety.get("steer_limit", 0.55))
@@ -186,7 +186,13 @@ class ForzaDriveEnv:
     def reset(self):
         if self._pending_reason is not None:       # recover from the crash that ended the last episode
             self.gamepad.reset()
-            self.resetter.recover(self._pending_reason)
+            recovered_by = self.resetter.recover(self._pending_reason)
+            if recovered_by == "FAILED":
+                raise RuntimeError(
+                    f"Forza recovery failed after {self._pending_reason}; "
+                    "manual reposition is required before training can continue."
+                )
+            print(f"[forza-env] recovered by {recovered_by}")
             self._pending_reason = None
         self.gamepad.reset()
         self.detector.reset()

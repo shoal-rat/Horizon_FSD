@@ -15,6 +15,8 @@ class FakeTelemetry:
     mean_surface_rumble: float = 0.0
     roll: float = 0.0
     pitch: float = 0.0
+    position_x: float = 0.0
+    position_z: float = 0.0
 
 
 class TestCrashDetector(unittest.TestCase):
@@ -63,6 +65,30 @@ class TestForzaResetter(unittest.TestCase):
         resetter._confirm_autodrive = lambda: True
         resetter._wait_on_road = lambda: True
         self.assertFalse(resetter.autodrive_reset())
+
+    def test_recovered_state_rejects_position_far_from_centerline(self):
+        resetter = ForzaResetter(
+            FakePad(),
+            FakeRx(),
+            ResetConfig(route_max_dist=5.0, require_route_if_available=True),
+        )
+        resetter._centerline = type("FakeCenterline", (), {
+            "project": staticmethod(lambda x, z: (0.0, 12.0))
+        })()
+        t = FakeTelemetry(speed=6.0, mean_surface_rumble=0.0)
+        self.assertFalse(resetter._is_recovered(t, require_speed=3.0))
+
+    def test_recovered_state_accepts_position_near_centerline(self):
+        resetter = ForzaResetter(
+            FakePad(),
+            FakeRx(),
+            ResetConfig(route_max_dist=5.0, require_route_if_available=True),
+        )
+        resetter._centerline = type("FakeCenterline", (), {
+            "project": staticmethod(lambda x, z: (0.0, 2.0))
+        })()
+        t = FakeTelemetry(speed=6.0, mean_surface_rumble=0.0)
+        self.assertTrue(resetter._is_recovered(t, require_speed=3.0))
 
 
 if __name__ == "__main__":

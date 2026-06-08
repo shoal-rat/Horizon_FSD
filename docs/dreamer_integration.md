@@ -104,3 +104,11 @@ CNN + RSSM dynamics. See the block in `dreamer.py` (kept/re-init print + try/exc
   Current Forza runs pretrain synchronously before live control, then trains in
   the background. After reward/action-contract changes, regenerate warm-start and
   quarantine old live episodes so stale rewards do not train the reward head.
+
+## Recovery note
+Horizon reset/respawn can place the car on a nearby flat surface rather than the
+target road. The recovery ladder therefore treats button presses as attempts, not
+success: after rewind/reset/AutoDrive, telemetry must be live, upright, low-rumble,
+and, when `centerline.npy` exists, close to the configured training route. If all
+attempts fail, live training stops for manual repositioning instead of collecting
+bad stuck/off-road replay.

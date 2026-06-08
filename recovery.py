@@ -26,6 +26,7 @@ Requires FH6 damage = None/Cosmetic so rewind isn't greyed out.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -157,6 +158,9 @@ class ResetConfig:
     autodrive_timeout_s: float = 20.0 # max wait for AutoDrive to get back on-road
     on_road_speed: float = 5.0        # m/s: "back on the road and moving"
     on_road_rumble: float = 0.15      # mean surface rumble below this = on a road
+    centerline_path: str = r"C:\Horizon_FSD\centerline.npy"
+    route_max_dist: float = 22.0      # m: recovered state must be near our training route if centerline exists
+    require_route_if_available: bool = True
     escalate_window_s: float = 8.0    # a new crash within this of a reset = a "repeat"
     max_consecutive_rewinds: int = 2  # after this many quick repeats, fall to AutoDrive reset
 
@@ -168,29 +172,57 @@ class ForzaResetter:
         self.cfg = cfg
         self._last_recovery_time = 0.0
         self._consecutive_rewinds = 0
+        self._centerline = None
+        try:
+            if cfg.centerline_path and os.path.exists(cfg.centerline_path):
+                from centerline import Centerline
+                self._centerline = Centerline.load(cfg.centerline_path)
+        except Exception:
+            logger.exception("failed to load recovery centerline")
+            self._centerline = None
 
     # ---- waits -----------------------------------------------------------
-    def _wait_live(self, require_speed: Optional[float] = None) -> bool:
-        t0 = time.perf_counter()
-        while time.perf_counter() - t0 < self.cfg.confirm_timeout_s:
-            t = self.rx.latest()
-            if t is not None and t.is_driving:
-                if require_speed is None or t.speed >= require_speed:
-                    return True
-            time.sleep(0.05)
-        return False
+    def _route_distance(self, t: ForzaTelemetry) -> Optional[float]:
+        if self._centerline is None:
+            return None
+        if not hasattr(t, "position_x") or not hasattr(t, "position_z"):
+            return None
+        _, lat = self._centerline.project(t.position_x, t.position_z)
+        return lat
 
-    def _wait_on_road(self) -> bool:
-        """AutoDrive drives the car back; wait until it's on a road AND moving."""
-        c = self.cfg
+    def _is_recovered(self, t: Optional[ForzaTelemetry],
+                      require_speed: Optional[float] = None) -> bool:
+        if t is None or not t.is_driving:
+            return False
+        if abs(t.roll) > DetectorConfig.flip_roll or abs(t.pitch) > DetectorConfig.flip_pitch:
+            return False
+        if require_speed is not None and t.speed < require_speed:
+            return False
+        if t.mean_surface_rumble >= self.cfg.on_road_rumble:
+            return False
+        lat = self._route_distance(t)
+        if self.cfg.require_route_if_available and lat is not None and lat > self.cfg.route_max_dist:
+            return False
+        return True
+
+    def _wait_recovered(self, require_speed: Optional[float] = None,
+                        timeout_s: Optional[float] = None) -> bool:
         t0 = time.perf_counter()
-        while time.perf_counter() - t0 < c.autodrive_timeout_s:
+        timeout = self.cfg.confirm_timeout_s if timeout_s is None else timeout_s
+        while time.perf_counter() - t0 < timeout:
             t = self.rx.latest()
-            if (t is not None and t.is_driving and t.speed >= c.on_road_speed
-                    and t.mean_surface_rumble < c.on_road_rumble):
+            if self._is_recovered(t, require_speed=require_speed):
                 return True
             time.sleep(0.05)
         return False
+
+    def _wait_live(self, require_speed: Optional[float] = None) -> bool:
+        return self._wait_recovered(require_speed=require_speed)
+
+    def _wait_on_road(self) -> bool:
+        """AutoDrive drives the car back; wait until it is route-verified and moving."""
+        return self._wait_recovered(require_speed=self.cfg.on_road_speed,
+                                    timeout_s=self.cfg.autodrive_timeout_s)
 
     def _position(self) -> Optional[tuple[float, float]]:
         t = self.rx.latest()
@@ -231,7 +263,7 @@ class ForzaResetter:
             time.sleep(c.press_gap_s)
         time.sleep(c.rewind_settle_s)                # wait for the rewind to FINISH
         self.pad.tap_button(c.confirm_button)        # A to resume
-        return self._wait_live(require_speed=c.min_recovered_speed)
+        return self._wait_recovered(require_speed=c.min_recovered_speed)
 
     def autodrive_reset(self) -> bool:
         """ANNA AutoDrive back to the middle of the road, then explicitly cancel it so
@@ -273,7 +305,7 @@ class ForzaResetter:
         time.sleep(c.confirm_dialog_s)
         self.pad.tap_button(c.confirm_button)
         time.sleep(c.settle_s)
-        return self._wait_live()
+        return self._wait_recovered()
 
     def reset_to_road(self) -> bool:
         """Legacy alternate binding for reset-position prompts."""
@@ -285,7 +317,7 @@ class ForzaResetter:
         time.sleep(c.confirm_dialog_s)
         self.pad.tap_button(c.confirm_button)
         time.sleep(c.settle_s)
-        return self._wait_live()
+        return self._wait_recovered()
 
     # ---- ladder ----------------------------------------------------------
     def recover(self, reason: str, max_attempts: int = 3) -> str:
