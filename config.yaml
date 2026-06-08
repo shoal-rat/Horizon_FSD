@@ -88,6 +88,9 @@ reset:
   autodrive_persistent: true
   autodrive_persistent_retry_s: 2.0
   autodrive_teleport_jump_m: 30.0
+  escalate_after_failures: 2
+  persistent_max_backoff_s: 15.0
+  heartbeat_every: 5
 
 recovery_demos:
   # Save smooth, non-teleport AutoDrive recoveries as Dreamer replay episodes.

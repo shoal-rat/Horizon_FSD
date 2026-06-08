@@ -164,7 +164,7 @@ class ResetConfig:
     settle_s: float = 1.5
     confirm_timeout_s: float = 12.0   # max wait for the car to be live after rewind
     min_recovered_speed: float = 3.0  # rewind success = moving again (m/s)
-    autodrive_timeout_s: float = 90.0 # max wait for one AutoDrive attempt to get back on-route
+    autodrive_timeout_s: float = 45.0 # max wait for one AutoDrive attempt (was 90: too long; escalate sooner)
     on_road_speed: float = 5.0        # m/s: "back on the road and moving"
     on_road_rumble: float = 0.15      # mean surface rumble below this = on a road
     centerline_path: str = r"C:\Horizon_FSD\centerline.npy"
@@ -172,6 +172,12 @@ class ResetConfig:
     require_route_if_available: bool = True
     escalate_window_s: float = 8.0    # a new crash within this of a reset = a "repeat"
     max_consecutive_rewinds: int = 2  # after this many quick repeats, fall to AutoDrive reset
+    # --- escalation: after the in-distribution methods (rewind/AutoDrive) keep failing, the car
+    #     is likely wedged/flipped where AutoDrive can't drive it out -> force a TELEPORT, which
+    #     recovers from ANY state. This is what stops the persistent loop hanging forever. ---
+    escalate_after_failures: int = 2  # full failed rounds before a teleport leads the ladder
+    persistent_max_backoff_s: float = 15.0  # cap the persistent-retry backoff
+    heartbeat_every: int = 5          # log a warning every N failed rounds (visibility, not silent hang)
 
 
 class ForzaResetter:
@@ -202,7 +208,8 @@ class ForzaResetter:
         return lat
 
     def _is_recovered(self, t: Optional[ForzaTelemetry],
-                      require_speed: Optional[float] = None) -> bool:
+                      require_speed: Optional[float] = None,
+                      require_route: bool = True) -> bool:
         if t is None or not t.is_driving:
             return False
         if abs(t.roll) > DetectorConfig.flip_roll or abs(t.pitch) > DetectorConfig.flip_pitch:
@@ -211,18 +218,22 @@ class ForzaResetter:
             return False
         if t.mean_surface_rumble >= self.cfg.on_road_rumble:
             return False
+        # require_route=False for a TELEPORT escalation: its job is just to FREE a wedged/flipped
+        # car onto a road (upright, live); AutoDrive or the agent's own driving brings it to route.
         lat = self._route_distance(t)
-        if self.cfg.require_route_if_available and lat is not None and lat > self.cfg.route_max_dist:
+        if (require_route and self.cfg.require_route_if_available
+                and lat is not None and lat > self.cfg.route_max_dist):
             return False
         return True
 
     def _wait_recovered(self, require_speed: Optional[float] = None,
-                        timeout_s: Optional[float] = None) -> bool:
+                        timeout_s: Optional[float] = None,
+                        require_route: bool = True) -> bool:
         t0 = time.perf_counter()
         timeout = self.cfg.confirm_timeout_s if timeout_s is None else timeout_s
         while time.perf_counter() - t0 < timeout:
             t = self.rx.latest()
-            if self._is_recovered(t, require_speed=require_speed):
+            if self._is_recovered(t, require_speed=require_speed, require_route=require_route):
                 return True
             time.sleep(0.05)
         return False
@@ -384,7 +395,7 @@ class ForzaResetter:
         time.sleep(c.confirm_dialog_s)
         self.pad.tap_button(c.confirm_button)
         time.sleep(c.settle_s)
-        return self._wait_recovered()
+        return self._wait_recovered(require_route=False)   # teleport: just free the car onto a road
 
     def reset_to_road(self) -> bool:
         """Legacy alternate binding for reset-position prompts."""
@@ -396,51 +407,53 @@ class ForzaResetter:
         time.sleep(c.confirm_dialog_s)
         self.pad.tap_button(c.confirm_button)
         time.sleep(c.settle_s)
-        return self._wait_recovered()
+        return self._wait_recovered(require_route=False)   # teleport: just free the car onto a road
 
     # ---- ladder ----------------------------------------------------------
     def recover(self, reason: str, max_attempts: int = 3) -> str:
-        """Run the reset. Returns the recovery method if it worked, else 'FAILED'.
+        """Run the reset ladder. Returns the method that worked, else 'FAILED'.
 
-        With autodrive_persistent=True (the default for unattended training), this
-        does not return FAILED after ordinary off-route/stuck states; it keeps
-        retrying AutoDrive until telemetry says the car is back near the route.
+        ESCALATING: try the in-distribution method for the failure type first (rewind /
+        AutoDrive). If those keep failing, the car is likely wedged or flipped where AutoDrive
+        cannot drive it out, so a TELEPORT (reset position) is forced to the front of the ladder
+        - it recovers from ANY state. With autodrive_persistent=True (unattended training) this
+        never returns FAILED and never hangs silently on AutoDrive alone: it keeps escalating
+        with capped backoff and a periodic heartbeat log.
         """
-        for _ in range(max_attempts):
-            if reason in ("impact", "stuck"):
-                try:
-                    if self.rewind():
-                        return "rewind"
-                except Exception:  # pragma: no cover
-                    logger.exception("rewind recovery error")
+        c = self.cfg
+        rewind = ("rewind", self.rewind)
+        autodrive = ("autodrive", self.autodrive_reset)
+        teleport = [("reset_position", self.reset_position), ("reset_to_road", self.reset_to_road)]
 
-            if reason in ("impact", "stuck", "offroad"):
-                methods = (
-                    ("autodrive", self.autodrive_reset),
-                    ("reset_position", self.reset_position),
-                    ("reset_to_road", self.reset_to_road),
-                )
-            else:
-                methods = (
-                    ("reset_position", self.reset_position),
-                    ("reset_to_road", self.reset_to_road),
-                    ("autodrive", self.autodrive_reset),
-                )
+        # in-distribution first choice per failure type (AutoDrive cannot un-flip a car, so a
+        # flipped/unknown state leads with a teleport)
+        if reason in ("impact", "stuck"):
+            primary = [rewind, autodrive]
+        elif reason == "offroad":
+            primary = [autodrive]
+        else:
+            primary = teleport + [autodrive]
 
-            for name, fn in methods:
+        start = time.perf_counter()
+        attempt = 0
+        while True:
+            attempt += 1
+            escalating = attempt > c.escalate_after_failures
+            order = (teleport + primary) if escalating else primary  # teleport leads once escalating
+            for name, fn in order:
                 try:
                     if fn():
-                        return name
+                        return name + ("+esc" if escalating else "")
                 except Exception:  # pragma: no cover
                     logger.exception("%s recovery error", name)
-            time.sleep(0.5)
 
-        if self.cfg.autodrive_persistent:
-            while True:
-                try:
-                    if self.autodrive_reset():
-                        return "autodrive_persistent"
-                except Exception:  # pragma: no cover
-                    logger.exception("persistent AutoDrive recovery error")
-                time.sleep(self.cfg.autodrive_persistent_retry_s)
-        return "FAILED"
+            if not c.autodrive_persistent and attempt >= max_attempts:
+                logger.error("recovery FAILED after %d attempts (reason=%s)", attempt, reason)
+                return "FAILED"
+            if attempt % max(1, c.heartbeat_every) == 0:
+                logger.warning(
+                    "recovery still failing: reason=%s attempts=%d elapsed=%.0fs - car may be "
+                    "wedged/flipped; escalating to teleport and backing off", reason, attempt,
+                    time.perf_counter() - start)
+            time.sleep(min(c.autodrive_persistent_retry_s * (1 + attempt // max(1, c.heartbeat_every)),
+                           c.persistent_max_backoff_s))

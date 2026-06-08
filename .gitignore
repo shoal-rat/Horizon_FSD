@@ -1,4 +1,4 @@
-# ── Python ───────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,44 +8,45 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# ── Virtual envs ─────────────────────────────────────────
+# Virtual environments
 .venv/
 venv/
 env/
 
-# ── Vendored external RL code (cloned, not ours) ─────────
+# Vendored external RL code. Recreate with:
+#   git clone https://github.com/NM512/dreamerv3-torch dreamerv3_torch
+#   git -C dreamerv3_torch apply ..\patches\dreamerv3_torch_horizon.patch
 dreamerv3_torch/
 
-# ── Horizon FSD artifacts ────────────────────────────────
-# Recorded driving data (large), checkpoints, logs, captures
+# Horizon FSD artifacts
 data/
 datasets/
 recordings/
 dreamer_logs/
 line_frames/
+checkpoints/
+runs/
+logs/
+captures/
+telemetry_dumps/
+
+# Large/generated model and replay files
 *.npz
 *.npy
 *.webdataset
-checkpoints/
 *.ckpt
 *.pt
 *.pth
-# TensorBoard
-runs/
-logs/
 *.log
-captures/
 *.mp4
 *.jpg
 *.png
-# keep doc images if any
-!docs/**/*.png
-
-# ── Telemetry capture dumps (probe output) ───────────────
-telemetry_dumps/
 *.bin
 
-# ── OS / editor ──────────────────────────────────────────
+# Keep documented images if any are added later.
+!docs/**/*.png
+
+# OS / editor
 .DS_Store
 Thumbs.db
 .idea/

@@ -1,18 +1,15 @@
 # Forza "Data Out" telemetry format reference
 
-This is the working reference for the UDP telemetry parser. It is a **hypothesis
-for FH6**, assembled from FH4/FH5 sources, to be **confirmed empirically** by
-`telemetry_probe.py` in Phase 0.
+This is the working reference for the UDP telemetry parser used by Horizon FSD.
+The parser targets the Forza Horizon "Car Dash" payload and the included tests
+assert the 324-byte layout used by the project.
 
 ## Summary of what we know
 
-- **FH6 officially supports "Data Out"** UDP telemetry (Forza Support doc
-  `support.forza.net/.../51744149102611`). One-way UDP, sent at the game's frame
-  rate, works to `127.0.0.1`.
-- The FH6 **"Car Dash" payload is reported byte-for-byte identical to FH5** (a
-  single fixed **324-byte** format) by community projects
-  (`satyajiit/forza-horizon-6-moza-bridge`, `TheBanHammer/fh6-tel`). **Not yet
-  confirmed field-by-field against a live FH6 packet** - that is Phase 0's job.
+- **FH6 supports "Data Out"** UDP telemetry. It is one-way UDP, sent at the
+  game's frame rate, and works to `127.0.0.1`.
+- Horizon FSD uses the Forza Horizon **324-byte "Car Dash"** packet layout. The
+  byte offsets are encoded in `forza_telemetry.py` and checked by unit tests.
 - **No game-mandated default port.** You pick the port in-game; your app binds the
   same one. Community apps use various ports (fh6-tel: 20440, moza-bridge: 4009).
   **Hard rule from the official doc: avoid ports 5200-5300** (the game binds its
@@ -93,15 +90,14 @@ This table is the single source of truth in `telemetry_probe.py`, where
 | 322 | s8  | NormalizedAIBrakeDifference |
 | 323 | u8  | trailing byte (present in 324-byte packets; absent in 323-byte builds) |
 
-## Open questions to resolve in Phase 0
+## Things to verify on a new machine or game build
 
-1. **Is the FH6 packet actually 324 bytes?** (323 and 331 would mean a different
-   layout - paste a hexdump if so.)
-2. **Does `PositionX` really sit at offset 244?** Confirm by checking the decoded
+1. **Is the packet still 324 bytes?** 323 and 331 would mean a different layout.
+2. **Does `PositionX` still sit at offset 244?** Confirm by checking the decoded
    `Speed` (offset 256) reads a sane m/s while driving, and `PositionX/Y/Z` change
    smoothly as you move.
-3. **Gear / neutral encoding** for the cars we use.
-4. The two **`HorizonUnknown` u32s** (@236/@240) - leave as raw unknowns unless a
+3. **Gear / neutral encoding** for the cars you use.
+4. The two **`HorizonUnknown` u32s** (@236/@240): leave as raw unknowns unless a
    use emerges.
 
 ## Sources

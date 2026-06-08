@@ -1,205 +1,260 @@
 # Horizon FSD
 
-End-to-end, vision-based self-driving agent for **Forza Horizon 6** (PC, native
-Windows). The agent learns to drive from screen pixels + UDP telemetry, outputs
-virtual-gamepad inputs, and improves via imitation learning then reinforcement
-learning.
+Vision-based self-driving experiments for Forza Horizon 6 on Windows.
 
-> **Status: Phase 1 complete.** Telemetry format confirmed live (324-byte "Car Dash"
-> @ ~60 Hz); telemetry parser, virtual gamepad, screen capture, and the rtgym
-> real-time env are built and verified (20 Hz control loop). Next: Phase 2 data
-> recording for behavioral cloning.
+Horizon FSD wraps the game as a real-time reinforcement-learning environment:
+screen pixels are observations, Forza Data Out UDP telemetry supplies speed,
+position and reward signals, and a virtual Xbox controller sends steering,
+throttle and brake commands. The current training path uses DreamerV3 with
+warm-start replay, live recovery, and AutoDrive recovery demonstrations.
 
----
+This repository is public for research and reproducibility. It does not include
+recorded driving data, checkpoints, replay buffers, the Python virtual
+environment, or the vendored DreamerV3 checkout.
 
-## How this project is built (human-in-the-loop)
+## Safety And Scope
 
-Code is written and unit-tested without the game; **anything that needs the live
-game is run by you**, the human. The build proceeds phase by phase, and **stops**
-at every step that depends on FH6 actually running. You paste back results; the
-build continues.
+- Run only in Offline Solo / Free Roam. Do not use this online, in competitive
+  modes, or for leaderboards.
+- This project sends automated controller input to a commercial game. Use it at
+  your own risk and follow the game's EULA and Code of Conduct.
+- The code uses only screen capture, UDP telemetry, and virtual gamepad input.
+  It does not inject into, patch, or read the game process memory.
+- The agent drives poorly during early training. Supervise live runs.
 
-## ⚠️ Safety / Terms of Service
+## Current Status
 
-- **Offline Solo / Free Roam only.** Run the agent with Horizon Life / online
-  disconnected. Community consensus is that automation or injected input while
-  **online** triggers a permanent anti-cheat ban; offline solo play does not.
-- Do **not** run the agent in online, competitive, or leaderboard modes.
-- Even offline, automated input is technically against most game ToS and is done
-  at your own risk. Read the FH6 EULA / Code of Conduct.
+- Telemetry parser for the 324-byte Forza Horizon "Car Dash" packet.
+- Windows.Graphics.Capture based screen capture.
+- Virtual Xbox 360 controller output through `vgamepad` / ViGEmBus.
+- Manual and ANNA/AutoDrive recording tools.
+- Behavioral-cloning dataset and model utilities.
+- DreamerV3 real-time environment:
+  - observation: `image`, `speed`, `line`
+  - action: steering, throttle, brake in Dreamer `[-1, 1]` coordinates
+  - reward: centerline progress plus off-road, slip, spin, idle and action costs
+  - crash/stuck/off-road detection
+  - recovery ladder using rewind and ANNA AutoDrive
+- AutoDrive recovery demonstrations:
+  - smooth non-teleport recoveries are saved as Dreamer replay episodes
+  - teleport/prompt recoveries are used for safety but not learned as dynamics
 
-## Architecture (planned)
+## Repository Layout
 
-A `gymnasium` real-time environment (rtgym-style, mirroring **tmrl**'s TrackMania
-pipeline) wraps three I/O channels:
-
-- **Observation** - screen capture (`bettercam`): a stack of the last 4 grayscale
-  84x84 frames + a scalar vector `[speed, last_action]`.
-- **State / reward** - UDP "Data Out" telemetry (speed, position, inputs, ...).
-- **Action** - virtual Xbox gamepad (`vgamepad` + ViGEmBus): continuous
-  `[steer in -1..1, throttle in 0..1, brake in 0..1]`.
-  DreamerV3 replay/policy uses symmetric pedal coordinates instead
-  (`throttle/brake -1..1`, mapped to gamepad triggers inside `forza_rl_env.py`).
-
-Training: behavioral cloning on your manual driving → SAC fine-tune
-(`stable-baselines3`) warm-started from BC → (stretch) DreamerV3 world model.
-
-## Repo layout
-
-```
+```text
 Horizon_FSD/
-├── README.md              # this file
-├── requirements.txt       # pinned deps for Phases 1-4 (Phase 0 needs none)
-├── config.yaml            # central config (ports, capture, env, paths)
-├── telemetry_probe.py     # Phase 0: confirm the live FH6 packet layout (stdlib)
-├── forza_telemetry.py     # Phase 1: 324-byte "Car Dash" parser -> ForzaTelemetry
-├── telemetry_receiver.py  # Phase 1: background UDP listener -> latest telemetry
-├── capture.py             # Phase 1: screen capture (windows-capture / WGC)
-├── gamepad.py             # Phase 1: virtual Xbox pad (vgamepad + ViGEmBus)
-├── sweep_gamepad.py       # Phase 1: [human test] confirm the car responds
-├── reward.py              # Phase 1: swappable reward functions
-├── config.py              # Phase 1: config.yaml loader
-├── forza_env.py           # Phase 1: rtgym real-time env (capture+telemetry+gamepad)
-├── random_agent.py        # Phase 1: [human test] random-action loop + FPS
-├── capture_preview.py     # Phase 1: [human test] save a frame to verify capture
-├── hitl.py                # shared human-in-the-loop helpers (startup countdown)
-├── record.py              # Phase 2: [you drive] log frames+telemetry+actions
-├── dataset.py             # Phase 2: filter/balance recordings -> BC dataset
-├── bc_model.py            # Phase 3: BCPolicy (timm backbone + classification steer head)
-├── train_bc.py            # Phase 3: train behavioral cloning
-├── run_policy.py          # Phase 3: [human test] drive with a BC checkpoint
-├── recovery.py            # Phase 5: crash detector + reset ladder (rewind/reset-to-road)
-├── reset_test.py          # Phase 5: [human test] validate the auto-reset
-├── forza_rl_env.py        # Phase 5: real-time DreamerV3 env (dict obs, action_repeat)
-├── make_warmstart.py      # Phase 5: recordings -> DreamerV3 warm-start episodes
-├── train_dreamer.py       # Phase 5: [you supervise] launch DreamerV3 training
-├── dreamerv3_torch/       # vendored NM512/dreamerv3-torch (gitignored; see docs)
-├── tests/
-│   └── test_forza_telemetry.py
-└── docs/
-    ├── telemetry_format.md   # the FH "Car Dash" byte layout (confirmed live)
-    └── dreamer_integration.md# DreamerV3 setup + the vendored-repo edits
+  action_utils.py                 Dreamer <-> gamepad action mapping
+  build_centerline.py             Build a route centerline from recorded position
+  capture.py                      Windows.Graphics.Capture wrapper
+  config.yaml                     Main runtime configuration
+  dataset.py                      Recording filters and BC dataset builder
+  forza_rl_env.py                 DreamerV3 live FH6 environment
+  forza_telemetry.py              324-byte Data Out parser
+  gamepad.py                      Virtual Xbox 360 controller wrapper
+  make_warmstart.py               Recordings -> Dreamer replay episodes
+  offline_pretrain_dreamer.py     Replay training without starting FH6
+  patches/
+    dreamerv3_torch_horizon.patch Vendored DreamerV3 changes
+  racing_line.py                  Visual racing-line cue reader
+  recovery.py                     Crash/stuck detection and recovery ladder
+  recovery_demo.py                Save smooth AutoDrive recoveries as replay
+  reward.py                       Driving reward
+  train_dreamer.py                Live DreamerV3 launcher
+  docs/
+    dreamer_integration.md        DreamerV3 setup and patch details
+    driving_rl_lessons.md         RL design notes and known risks
+    telemetry_format.md           Data Out packet reference
+  tests/                          Unit tests
 ```
 
-## Phase roadmap
+Ignored local artifacts include:
 
-| Phase | Deliverable | Status |
-|------:|-------------|------------|
-| **0** ✅ | repo scaffold + `telemetry_probe.py` | confirmed 324-byte format @ 60 Hz |
-| **1** ✅ | telemetry parser + gamepad + capture + rtgym env | gamepad drives the car; 20 Hz loop |
-| **2** ✅ | `record.py` + `dataset.py` | ~75 min recorded (manual + AutoDrive) |
-| **3** ✅ | behavioral cloning | trained; hit the covariate-shift ceiling (BC is a warm start, not the driver) |
-| ~~4~~ | ~~SAC~~ | skipped — went straight to the world model |
-| **5** 🔧 | **DreamerV3 world-model RL** | env + reward + reset ladder + warm-start built; **supervised shakedown next** |
-
-> AutoDrive's controls land in the telemetry, so it doubles as a scalable data
-> engine. Recovery now prefers FH6 rewind + ANNA AutoDrive; smooth non-teleport
-> AutoDrive recoveries are saved as replay demos. See `docs/dreamer_integration.md`.
-
----
-
-## ▶ Phase 0 - run the telemetry probe
-
-The probe is **pure Python standard library** - no `pip install` needed. Any
-Python 3.8+ works, including your system Python 3.13.
-
-### 1. Enable Data Out in FH6
-
-In-game: **Settings → HUD and Gameplay → Data Out**
-
-- **Data Out:** On
-- **IP Address:** `127.0.0.1`
-- **Port:** `9999`  *(any port outside 5200-5300; must match the probe)*
-
-### 2. Run the probe
-
-From `C:\Horizon_FSD`:
-
-```powershell
-python telemetry_probe.py
+```text
+.venv/
+dreamerv3_torch/
+recordings/
+dreamer_logs/
+checkpoints/
+runs/
+*.npz, *.npy, *.pt, *.pth
 ```
 
-Optionally save the first raw packet so we have ground truth:
+## Requirements
+
+- Windows 10/11.
+- Forza Horizon 6 for PC with Data Out enabled.
+- Python 3.13 was used on the development machine. Python 3.10-3.13 should work
+  for most project code, but native package wheels may vary.
+- NVIDIA GPU recommended for DreamerV3. The project was tuned for limited VRAM,
+  including a workflow where FH6 is closed during offline pretraining.
+- ViGEmBus driver for virtual controller input.
+
+Install the base environment:
 
 ```powershell
-python telemetry_probe.py --save-raw first_packet.bin
-```
-
-If you picked a different in-game port, pass it: `python telemetry_probe.py --port 5606`.
-
-> If Windows Firewall prompts, **allow** Python on private networks. If you see no
-> packets, the probe prints troubleshooting hints after ~6 seconds.
-
-### 3. Drive
-
-Get into a car and **drive manually for ~30 seconds** (steer left/right, accelerate,
-brake, change gear). Telemetry is only sent while actively driving.
-
-### 4. Stop and paste back
-
-Press **Ctrl+C**. Copy back to me:
-
-1. The whole **SUMMARY** block (especially the **distinct packet lengths**).
-2. The full **hexdump + decoded fields** of the first packet or two.
-3. Whether the decoded **Speed / Gear / Throttle / Steer** values looked correct
-   for what you were doing while driving.
-
-That tells us whether the FH5 hypothesis (324-byte "Car Dash", `PositionX` @244)
-holds for FH6. **Then I build the Phase 1 parser against the confirmed layout.**
-
----
-
-## Environment setup (already done on the dev machine)
-
-Python 3.13 venv at `.venv`. PowerShell `Activate.ps1` may be blocked by execution
-policy — just call the venv Python directly. Install with `--no-cache-dir` to avoid
-a pip cache-permission error seen on this machine:
-
-```powershell
+cd C:\Horizon_FSD
 python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install --no-cache-dir -r requirements.txt
-# GPU torch instead of CPU (Phase 3+):
-#   .\.venv\Scripts\python.exe -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu126
 ```
 
-**ViGEmBus driver (for the virtual gamepad):** pip's *wheel* install of `vgamepad`
-skips the bundled driver installer, so run it manually once (accept the UAC prompt):
-`.\.venv\Scripts\...\vgamepad\win\vigem\install\x64\ViGEmBusSetup_x64.msi`, or get it
-from <https://github.com/nefarius/ViGEmBus/releases>.
-
-**Screen capture = `windows-capture` (WGC), not dxcam/bettercam.** On this NVIDIA
-Optimus + HDR laptop, DXGI Desktop Duplication returns all-black frames and crashes
-comtypes on Python 3.13. `windows-capture` handles HDR + hybrid GPUs.
-
-## Phase 1 run commands
+For CUDA PyTorch, install the CUDA wheel before packages that depend on
+`torch` / `torchvision`, for example:
 
 ```powershell
-# Telemetry parser unit tests (no game needed)
-.\.venv\Scripts\python.exe tests\test_forza_telemetry.py
+.\.venv\Scripts\python.exe -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
+.\.venv\Scripts\python.exe -m pip install timm==1.0.27 tensorboard==2.20.0
+```
 
-# [human] confirm the virtual gamepad drives the car (FH6 focused, parked)
+`vgamepad` requires ViGEmBus. If the virtual controller cannot connect, install
+the driver from the bundled `vgamepad` package path or from:
+
+```text
+https://github.com/nefarius/ViGEmBus/releases
+```
+
+## Forza Setup
+
+In FH6:
+
+```text
+Settings -> HUD and Gameplay -> Data Out
+Data Out: On
+IP Address: 127.0.0.1
+Port: 9999
+```
+
+Use Offline Solo / Free Roam, damage None/Cosmetic, and a stable camera view.
+The capture code expects the configured monitor or window in `config.yaml`.
+
+## Restore The DreamerV3 Vendor
+
+The `dreamerv3_torch/` directory is intentionally not tracked. Recreate it after
+a fresh clone:
+
+```powershell
+cd C:\Horizon_FSD
+git clone https://github.com/NM512/dreamerv3-torch dreamerv3_torch
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir gym==0.26.2 ruamel.yaml einops
+git -C dreamerv3_torch apply ..\patches\dreamerv3_torch_horizon.patch
+```
+
+The patch adds the Forza environment bridge, async training support, tolerant
+checkpoint loading, the `forza` config, and dynamic loading of `recovery-*.npz`
+AutoDrive recovery demonstrations.
+
+More detail: `docs/dreamer_integration.md`.
+
+## Quick Validation
+
+Run unit tests without the game:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Useful live checks:
+
+```powershell
+# Confirm Data Out packets.
+.\.venv\Scripts\python.exe telemetry_probe.py
+
+# Confirm the virtual controller moves the car.
 .\.venv\Scripts\python.exe sweep_gamepad.py
 
-# [human] random-action loop: drives the car, measures the 20 Hz control rate
-.\.venv\Scripts\python.exe random_agent.py --duration 30
+# Confirm capture sees the right screen/window.
+.\.venv\Scripts\python.exe capture_preview.py
+
+# Validate crash/stuck recovery before unattended training.
+.\.venv\Scripts\python.exe reset_test.py --duration 600
 ```
 
-If capture grabs the wrong screen, set `capture.monitor_index` in `config.yaml`, or
-`capture.window_name: "Forza Horizon 6"` to capture the game window directly. The
-rtgym "time-step timed out" warnings during the first few steps are benign.
+## Training Workflow
 
-## Phase 2 run commands
+1. Record driving.
 
 ```powershell
-# [you drive] record manual driving (FH6 focused). Ctrl+C to stop, or --duration SECONDS.
 .\.venv\Scripts\python.exe record.py --duration 600
-# bulk low-quality ANNA AutoDrive data (filtered hard later); supplement only:
 .\.venv\Scripts\python.exe record.py --autodrive --duration 600
 ```
 
-Shards land in `recordings/<quality>_<timestamp>/`. Record variety (highway, town,
-twisty mountain, dirt/off-road; different speeds, biomes, weather, cars) and DRIVE
-WELL — behavioral cloning's ceiling is the quality of the demonstrations.
+2. Build a centerline from a clean reference session.
 
-DreamerV3 (Phase 5) needs a **separate** venv (`sheeprl==0.5.7` requires gymnasium
-0.29.* and Python ≤3.11), incompatible with the main stack.
+```powershell
+.\.venv\Scripts\python.exe build_centerline.py --session C:\Horizon_FSD\recordings\manual_YYYYMMDD_HHMMSS --out C:\Horizon_FSD\centerline.npy
+```
+
+3. Convert recordings to Dreamer warm-start replay.
+
+```powershell
+.\.venv\Scripts\python.exe make_warmstart.py --logdir C:\Horizon_FSD\dreamer_logs\forza
+```
+
+4. If VRAM is tight, close FH6 and pretrain from replay offline.
+
+```powershell
+.\.venv\Scripts\python.exe offline_pretrain_dreamer.py --updates 200 --logdir C:\Horizon_FSD\dreamer_logs\forza
+```
+
+5. Open FH6 again and run live Dreamer training.
+
+```powershell
+.\.venv\Scripts\python.exe train_dreamer.py --logdir C:\Horizon_FSD\dreamer_logs\forza
+```
+
+If memory is still tight, pass smaller Dreamer overrides, for example:
+
+```powershell
+.\.venv\Scripts\python.exe train_dreamer.py --logdir C:\Horizon_FSD\dreamer_logs\forza --batch_size 2
+```
+
+## Recovery Strategy
+
+Forza reset/respawn can place the car on nearby flat ground rather than the
+target road. This project therefore treats reset button presses as attempts, not
+success. A recovered state must be live, upright, low-rumble, and close to the
+configured route when `centerline.npy` exists.
+
+For off-road or guardrail states, recovery prefers ANNA AutoDrive after any
+rewind attempt:
+
+- If FH6 asks whether to teleport to a nearby road, the recovery loop taps `A`
+  while telemetry looks paused or stationary.
+- If there is no prompt, the loop waits for AutoDrive to drive back toward the
+  pinned route.
+- With `reset.autodrive_persistent: true`, training waits and retries AutoDrive
+  instead of stopping.
+- If AutoDrive/rewind keep failing, recovery escalates to teleport-style reset
+  methods so the training process does not hang forever on a wedged or flipped
+  car.
+- Smooth non-teleport recoveries are saved as `recovery-*.npz` replay episodes.
+- Coordinate jumps beyond `autodrive_teleport_jump_m` are treated as teleport
+  recoveries and are not used as training dynamics.
+
+This lets the agent gradually see examples of how to escape grass or barriers,
+while still using AutoDrive as the safety net.
+
+## Configuration Highlights
+
+Key blocks in `config.yaml`:
+
+- `telemetry`: Data Out host, port and packet settings.
+- `capture`: monitor/window capture and image size.
+- `rl_reward`: route progress and penalty weights.
+- `rl_safety`: early-training steering clamps.
+- `reset`: rewind, AutoDrive, route verification and persistent recovery.
+- `recovery_demos`: whether to save smooth AutoDrive recoveries into replay.
+
+## Public Repo Notes
+
+This repository contains code and documentation only. It intentionally excludes:
+
+- game recordings and replay episodes
+- trained checkpoints
+- local centerlines
+- TensorBoard logs
+- the vendored DreamerV3 checkout
+- Python virtual environments
+
+No license file is included yet. Until one is added, standard GitHub default
+copyright rules apply.
