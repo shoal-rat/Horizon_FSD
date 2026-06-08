@@ -56,7 +56,8 @@ def main() -> int:
     print(" The script will DRIVE and crash on purpose, then auto-recover. Ctrl+C to stop.")
     countdown(args.countdown)
 
-    stats = {"detections": 0, "rewind": 0, "reset_to_road": 0, "FAILED": 0}
+    stats = {"detections": 0, "rewind": 0, "reset_position": 0, "reset_to_road": 0,
+             "autodrive": 0, "autodrive_persistent": 0, "FAILED": 0}
     by_reason: dict[str, int] = {}
     start = time.perf_counter()
     try:
@@ -95,13 +96,15 @@ def main() -> int:
         rx.close()
 
     n = stats["detections"]
-    ok = stats["rewind"] + stats["reset_to_road"]
+    ok = (stats["rewind"] + stats["reset_position"] + stats["reset_to_road"] +
+          stats["autodrive"] + stats["autodrive_persistent"])
     print("\n" + "=" * 74)
     print(" RESET VALIDATION SUMMARY")
     print("-" * 74)
     print(f" crashes detected   : {n}   by reason: {by_reason}")
     print(f" recovered by rewind: {stats['rewind']}")
-    print(f" recovered by reset : {stats['reset_to_road']}")
+    print(f" recovered by reset : {stats['reset_position'] + stats['reset_to_road']}")
+    print(f" recovered by AD    : {stats['autodrive'] + stats['autodrive_persistent']}")
     print(f" FAILED to recover  : {stats['FAILED']}")
     print(f" success rate       : {ok}/{n}" + (f"  ({100*ok/n:.0f}%)" if n else ""))
     print("=" * 74)

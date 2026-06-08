@@ -15,10 +15,11 @@ Detection (debounced):
 Reset ladder:
   * impact/stuck near a barrier : REWIND first. This is the only option that reliably
               backs out of an on-road guardrail hit.
-  * fallback                    : pause-menu RESET CAR POSITION.
-  * last resort                 : ANNA AutoDrive, but only if it actually moves the car
-              away; AutoDrive is navigation, not a teleport, so it can stay wedged
-              against road furniture.
+  * off-route/stuck fallback    : ANNA AutoDrive to the pinned route. If the game asks
+              to teleport to a nearby road, keep tapping A while telemetry looks paused
+              or stationary; otherwise wait while AutoDrive drives back to the center.
+  * legacy fallback             : pause-menu RESET CAR POSITION, kept for flipped cars
+              and builds where ANNA is unavailable.
 
 Every reset is TELEMETRY-GATED (poll Data Out until the car is live/on-road), not a fixed sleep.
 Requires FH6 damage = None/Cosmetic so rewind isn't greyed out.
@@ -146,7 +147,14 @@ class ResetConfig:
     confirm_attempts: int = 3         # re-press A up to this many times if AutoDrive didn't engage
     confirm_check_s: float = 2.0      # after A, watch this long for the car to start driving itself
     autodrive_engaged_speed: float = 2.0  # m/s: car moving on its own (we hold neutral) = AutoDrive took over
-    autodrive_min_displacement: float = 12.0 # m: AutoDrive must actually escape, not push a guardrail
+    autodrive_min_displacement: float = 12.0 # legacy metric; route verification is authoritative
+    autodrive_prompt_retry_s: float = 1.0 # while stopped/menu-like, tap A for "teleport to nearby road"
+    autodrive_prompt_attempts: int = 12
+    autodrive_reissue_s: float = 10.0 # no progress this long -> re-open ANNA AutoDrive
+    autodrive_progress_min_m: float = 2.0
+    autodrive_on_route_settle_s: float = 0.7
+    autodrive_persistent: bool = True # keep training alive by waiting/retrying AutoDrive
+    autodrive_persistent_retry_s: float = 2.0
     autodrive_break_s: float = 0.6    # after on-road, hold a control input this long to CANCEL the
     #                                   lingering AutoDrive (~1s) before handing back, so the agent's
     #                                   first real action isn't eaten by the leftover autopilot
@@ -155,7 +163,7 @@ class ResetConfig:
     settle_s: float = 1.5
     confirm_timeout_s: float = 12.0   # max wait for the car to be live after rewind
     min_recovered_speed: float = 3.0  # rewind success = moving again (m/s)
-    autodrive_timeout_s: float = 20.0 # max wait for AutoDrive to get back on-road
+    autodrive_timeout_s: float = 90.0 # max wait for one AutoDrive attempt to get back on-route
     on_road_speed: float = 5.0        # m/s: "back on the road and moving"
     on_road_rumble: float = 0.15      # mean surface rumble below this = on a road
     centerline_path: str = r"C:\Horizon_FSD\centerline.npy"
@@ -224,6 +232,72 @@ class ForzaResetter:
         return self._wait_recovered(require_speed=self.cfg.on_road_speed,
                                     timeout_s=self.cfg.autodrive_timeout_s)
 
+    def _open_autodrive(self) -> None:
+        """Open ANNA AutoDrive for the already-pinned destination.
+
+        The final A chooses AutoDrive. Some off-road states then show a second
+        "teleport to nearby road" confirmation; _wait_autodrive_resolved handles
+        that by pressing A only while telemetry still looks paused or stationary.
+        """
+        c = self.cfg
+        self.pad.reset()
+        self.pad.tap_button(c.autodrive_down_button, hold_s=c.tap_hold_s)
+        time.sleep(c.press_gap_s)
+        self.pad.tap_button(c.autodrive_left_button, hold_s=c.tap_hold_s)
+        time.sleep(c.press_gap_s)
+        self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
+
+    def _wait_autodrive_resolved(self, start_pos: Optional[tuple[float, float]]) -> bool:
+        """Wait for either AutoDrive to return to the route or the optional
+        teleport prompt to be accepted.
+
+        Telemetry cannot read the dialog text, so the signal is behavioral:
+        if the car is not live, not moving, or still far from the route, occasional
+        A taps are safe and useful. Once AutoDrive is moving, we stop tapping and
+        just wait for the route/on-road gate.
+        """
+        c = self.cfg
+        t0 = time.perf_counter()
+        last_a = t0 - c.autodrive_prompt_retry_s
+        last_reissue = t0
+        last_progress = t0
+        last_pos = start_pos
+        route_seen_since: Optional[float] = None
+        prompt_attempts_left = c.autodrive_prompt_attempts
+
+        while time.perf_counter() - t0 < c.autodrive_timeout_s:
+            now = time.perf_counter()
+            t = self.rx.latest()
+
+            if self._is_recovered(t, require_speed=None):
+                route_seen_since = route_seen_since or now
+                if now - route_seen_since >= c.autodrive_on_route_settle_s:
+                    return True
+            else:
+                route_seen_since = None
+
+            pos = self._position()
+            if self._displacement(last_pos, pos) >= c.autodrive_progress_min_m:
+                last_pos = pos
+                last_progress = now
+
+            moving = bool(t is not None and t.is_driving and t.speed >= c.autodrive_engaged_speed)
+            prompt_like = t is None or not t.is_driving or not moving
+            if prompt_like and prompt_attempts_left > 0 and now - last_a >= c.autodrive_prompt_retry_s:
+                self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
+                last_a = now
+                prompt_attempts_left -= 1
+
+            if now - last_progress >= c.autodrive_reissue_s and now - last_reissue >= c.autodrive_reissue_s:
+                self._open_autodrive()
+                last_reissue = now
+                last_progress = now
+                last_a = now
+                prompt_attempts_left = c.autodrive_prompt_attempts
+
+            time.sleep(0.05)
+        return False
+
     def _position(self) -> Optional[tuple[float, float]]:
         t = self.rx.latest()
         if t is None:
@@ -266,24 +340,12 @@ class ForzaResetter:
         return self._wait_recovered(require_speed=c.min_recovered_speed)
 
     def autodrive_reset(self) -> bool:
-        """ANNA AutoDrive back to the middle of the road, then explicitly cancel it so
-        the agent has clean control when the episode resumes."""
+        """ANNA AutoDrive back to the route, accepting the optional teleport prompt
+        if the game offers it, then explicitly cancel AutoDrive before handoff."""
         c = self.cfg
         start_pos = self._position()
-        self.pad.reset()
-        self.pad.tap_button(c.autodrive_down_button, hold_s=c.tap_hold_s)
-        time.sleep(c.press_gap_s)
-        self.pad.tap_button(c.autodrive_left_button, hold_s=c.tap_hold_s)
-        time.sleep(c.press_gap_s)
-        if not self._confirm_autodrive():            # tap A, retry if it didn't take over
-            return False
-        if not self._wait_on_road():                 # AutoDrive drives the car back to the road
-            return False
-        moved = self._displacement(start_pos, self._position())
-        if moved < c.autodrive_min_displacement:
-            # ANNA can accept the command while still pushing into a guardrail. Treat
-            # that as a failed recovery; otherwise the next episode starts wedged.
-            self.pad.reset()
+        self._open_autodrive()
+        if not self._wait_autodrive_resolved(start_pos):
             return False
         # Break the lingering AutoDrive: a control input cancels it, but it takes ~1s to
         # fully release. Hold light throttle so the handoff isn't "missed" (the agent's
@@ -321,7 +383,12 @@ class ForzaResetter:
 
     # ---- ladder ----------------------------------------------------------
     def recover(self, reason: str, max_attempts: int = 3) -> str:
-        """Run the reset. Returns the recovery method if it worked, else 'FAILED'."""
+        """Run the reset. Returns the recovery method if it worked, else 'FAILED'.
+
+        With autodrive_persistent=True (the default for unattended training), this
+        does not return FAILED after ordinary off-route/stuck states; it keeps
+        retrying AutoDrive until telemetry says the car is back near the route.
+        """
         for _ in range(max_attempts):
             if reason in ("impact", "stuck"):
                 try:
@@ -329,15 +396,34 @@ class ForzaResetter:
                         return "rewind"
                 except Exception:  # pragma: no cover
                     logger.exception("rewind recovery error")
-            for name, fn in (
-                ("reset_position", self.reset_position),
-                ("reset_to_road", self.reset_to_road),
-                ("autodrive", self.autodrive_reset),
-            ):
+
+            if reason in ("impact", "stuck", "offroad"):
+                methods = (
+                    ("autodrive", self.autodrive_reset),
+                    ("reset_position", self.reset_position),
+                    ("reset_to_road", self.reset_to_road),
+                )
+            else:
+                methods = (
+                    ("reset_position", self.reset_position),
+                    ("reset_to_road", self.reset_to_road),
+                    ("autodrive", self.autodrive_reset),
+                )
+
+            for name, fn in methods:
                 try:
                     if fn():
                         return name
                 except Exception:  # pragma: no cover
                     logger.exception("%s recovery error", name)
             time.sleep(0.5)
+
+        if self.cfg.autodrive_persistent:
+            while True:
+                try:
+                    if self.autodrive_reset():
+                        return "autodrive_persistent"
+                except Exception:  # pragma: no cover
+                    logger.exception("persistent AutoDrive recovery error")
+                time.sleep(self.cfg.autodrive_persistent_retry_s)
         return "FAILED"

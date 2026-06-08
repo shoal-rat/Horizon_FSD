@@ -78,7 +78,15 @@ reset:
   on_road_rumble: 0.15
   min_recovered_speed: 3.0
   on_road_speed: 5.0
+  autodrive_timeout_s: 90.0
   autodrive_min_displacement: 12.0
+  autodrive_prompt_retry_s: 1.0
+  autodrive_prompt_attempts: 12
+  autodrive_reissue_s: 10.0
+  autodrive_progress_min_m: 2.0
+  autodrive_on_route_settle_s: 0.7
+  autodrive_persistent: true
+  autodrive_persistent_retry_s: 2.0
 
 bc:                           # Phase 3 behavioral cloning
   backbone: "resnet18"        # timm backbone (e.g. resnet18, efficientnet_b0)

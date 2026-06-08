@@ -109,6 +109,11 @@ CNN + RSSM dynamics. See the block in `dreamer.py` (kept/re-init print + try/exc
 Horizon reset/respawn can place the car on a nearby flat surface rather than the
 target road. The recovery ladder therefore treats button presses as attempts, not
 success: after rewind/reset/AutoDrive, telemetry must be live, upright, low-rumble,
-and, when `centerline.npy` exists, close to the configured training route. If all
-attempts fail, live training stops for manual repositioning instead of collecting
-bad stuck/off-road replay.
+and, when `centerline.npy` exists, close to the configured training route.
+
+For off-road/guardrail states, AutoDrive is now the main recovery path after any
+rewind attempt. If FH shows the "teleport to nearby road" confirmation, the
+recovery loop keeps tapping A while telemetry looks paused or stationary; if
+there is no prompt, it waits for AutoDrive to drive back to the route center.
+With `reset.autodrive_persistent: true`, live training waits and retries
+AutoDrive instead of stopping the process.

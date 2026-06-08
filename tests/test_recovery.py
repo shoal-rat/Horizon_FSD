@@ -39,14 +39,21 @@ class TestCrashDetector(unittest.TestCase):
 
 
 class FakePad:
+    def __init__(self, on_tap=None):
+        self.on_tap = on_tap
+        self.taps = []
+        self.actions = []
+
     def reset(self):
         pass
 
-    def tap_button(self, *args, **kwargs):
-        pass
+    def tap_button(self, button_name, *args, **kwargs):
+        self.taps.append(button_name)
+        if self.on_tap is not None:
+            self.on_tap(button_name)
 
-    def apply(self, *args, **kwargs):
-        pass
+    def apply(self, action, *args, **kwargs):
+        self.actions.append(action)
 
 
 class FakeRx:
@@ -55,16 +62,48 @@ class FakeRx:
 
 
 class TestForzaResetter(unittest.TestCase):
-    def test_autodrive_requires_actual_displacement(self):
+    def test_autodrive_accepts_route_verified_recovery_without_large_displacement(self):
         resetter = ForzaResetter(
             FakePad(),
             FakeRx(),
             ResetConfig(autodrive_min_displacement=10.0, press_gap_s=0.0),
         )
         resetter._position = lambda: (100.0, 200.0)
-        resetter._confirm_autodrive = lambda: True
-        resetter._wait_on_road = lambda: True
-        self.assertFalse(resetter.autodrive_reset())
+        resetter._wait_autodrive_resolved = lambda start_pos: True
+        self.assertTrue(resetter.autodrive_reset())
+
+    def test_autodrive_accepts_optional_teleport_prompt_with_a(self):
+        state = {"prompt": True}
+
+        def on_tap(button):
+            if button == "A":
+                state["prompt"] = False
+
+        class PromptRx:
+            def latest(self):
+                if state["prompt"]:
+                    return FakeTelemetry(speed=0.0, is_driving=False)
+                return FakeTelemetry(speed=0.0, is_driving=True,
+                                     mean_surface_rumble=0.0,
+                                     position_x=1.0, position_z=1.0)
+
+        pad = FakePad(on_tap=on_tap)
+        resetter = ForzaResetter(
+            pad,
+            PromptRx(),
+            ResetConfig(
+                press_gap_s=0.0,
+                autodrive_timeout_s=0.5,
+                autodrive_prompt_retry_s=0.0,
+                autodrive_on_route_settle_s=0.0,
+            ),
+        )
+        resetter._centerline = type("FakeCenterline", (), {
+            "project": staticmethod(lambda x, z: (0.0, 0.0))
+        })()
+
+        self.assertTrue(resetter.autodrive_reset())
+        self.assertIn("A", pad.taps)
 
     def test_recovered_state_rejects_position_far_from_centerline(self):
         resetter = ForzaResetter(
