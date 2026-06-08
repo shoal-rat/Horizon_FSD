@@ -155,6 +155,7 @@ class ResetConfig:
     autodrive_on_route_settle_s: float = 0.7
     autodrive_persistent: bool = True # keep training alive by waiting/retrying AutoDrive
     autodrive_persistent_retry_s: float = 2.0
+    autodrive_teleport_jump_m: float = 30.0 # per-sample coordinate jump => teleport, not teachable
     autodrive_break_s: float = 0.6    # after on-road, hold a control input this long to CANCEL the
     #                                   lingering AutoDrive (~1s) before handing back, so the agent's
     #                                   first real action isn't eaten by the leftover autopilot
@@ -174,10 +175,12 @@ class ResetConfig:
 
 
 class ForzaResetter:
-    def __init__(self, gamepad, telemetry, cfg: ResetConfig = ResetConfig()) -> None:
+    def __init__(self, gamepad, telemetry, cfg: ResetConfig = ResetConfig(),
+                 demo_recorder=None) -> None:
         self.pad = gamepad
         self.rx = telemetry
         self.cfg = cfg
+        self.demo_recorder = demo_recorder
         self._last_recovery_time = 0.0
         self._consecutive_rewinds = 0
         self._centerline = None
@@ -247,7 +250,7 @@ class ForzaResetter:
         time.sleep(c.press_gap_s)
         self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
 
-    def _wait_autodrive_resolved(self, start_pos: Optional[tuple[float, float]]) -> bool:
+    def _wait_autodrive_resolved(self, start_pos: Optional[tuple[float, float]]) -> tuple[bool, bool]:
         """Wait for either AutoDrive to return to the route or the optional
         teleport prompt to be accepted.
 
@@ -262,6 +265,8 @@ class ForzaResetter:
         last_reissue = t0
         last_progress = t0
         last_pos = start_pos
+        teleport_pos = start_pos
+        teleported = False
         route_seen_since: Optional[float] = None
         prompt_attempts_left = c.autodrive_prompt_attempts
 
@@ -269,14 +274,21 @@ class ForzaResetter:
             now = time.perf_counter()
             t = self.rx.latest()
 
+            if self.demo_recorder is not None:
+                self.demo_recorder.sample(t)
+
             if self._is_recovered(t, require_speed=None):
                 route_seen_since = route_seen_since or now
                 if now - route_seen_since >= c.autodrive_on_route_settle_s:
-                    return True
+                    return True, teleported
             else:
                 route_seen_since = None
 
             pos = self._position()
+            if self._displacement(teleport_pos, pos) > c.autodrive_teleport_jump_m:
+                teleported = True
+            if pos is not None:
+                teleport_pos = pos
             if self._displacement(last_pos, pos) >= c.autodrive_progress_min_m:
                 last_pos = pos
                 last_progress = now
@@ -296,7 +308,7 @@ class ForzaResetter:
                 prompt_attempts_left = c.autodrive_prompt_attempts
 
             time.sleep(0.05)
-        return False
+        return False, teleported
 
     def _position(self) -> Optional[tuple[float, float]]:
         t = self.rx.latest()
@@ -344,8 +356,13 @@ class ForzaResetter:
         if the game offers it, then explicitly cancel AutoDrive before handoff."""
         c = self.cfg
         start_pos = self._position()
+        if self.demo_recorder is not None:
+            self.demo_recorder.begin("autodrive", start_pos=start_pos)
         self._open_autodrive()
-        if not self._wait_autodrive_resolved(start_pos):
+        success, teleported = self._wait_autodrive_resolved(start_pos)
+        if self.demo_recorder is not None:
+            self.demo_recorder.end(success, teleported=teleported)
+        if not success:
             return False
         # Break the lingering AutoDrive: a control input cancels it, but it takes ~1s to
         # fully release. Hold light throttle so the handoff isn't "missed" (the agent's

@@ -224,3 +224,80 @@ new file mode 100644
 +    sys.path.insert(0, _HFSD)
 +
 +from forza_rl_env import ForzaDriveEnv  # noqa: E402,F401
+diff --git a/tools.py b/tools.py
+--- a/tools.py
++++ b/tools.py
+@@ -164,6 +164,11 @@ def simulate(
+                 add_to_cache(cache, envs[index].id, t)
+                 # replace obs with done by initial state
+                 obs[index] = result
++            if not is_eval:
++                added, added_steps = load_new_episodes(directory, cache, prefix="recovery-")
++                if added:
++                    logger.scalar("recovery_demo_episodes", added)
++                    logger.scalar("recovery_demo_steps", added_steps)
+         # step agents
+         obs = {k: np.stack([o[k] for o in obs]) for k in obs[0] if "log_" not in k}
+         action, agent_state = agent(obs, done, agent_state)
+@@ -216,6 +216,10 @@ def simulate(
+                         # log items won't be used later
+                         cache[envs[i].id].pop(key)
+ 
+                 if not is_eval:
++                    added, added_steps = load_new_episodes(directory, cache, prefix="recovery-")
++                    if added:
++                        logger.scalar("recovery_demo_episodes", added)
++                        logger.scalar("recovery_demo_steps", added_steps)
+                     step_in_dataset = erase_over_episodes(cache, limit)
+                     logger.scalar(f"dataset_size", step_in_dataset)
+                     logger.scalar(f"train_return", score)
+@@ -318,12 +323,13 @@ def sample_episodes(episodes, length, seed=0):
+     while True:
+         size = 0
+         ret = None
++        episode_values = list(episodes.values())
+         p = np.array(
+-            [len(next(iter(episode.values()))) for episode in episodes.values()]
++            [len(next(iter(episode.values()))) for episode in episode_values]
+         )
+         p = p / np.sum(p)
+         while size < length:
+-            episode = np_random.choice(list(episodes.values()), p=p)
++            episode = np_random.choice(episode_values, p=p)
+             total = len(next(iter(episode.values())))
+             # make sure at least one transition included
+             if total < 2:
+@@ -395,6 +399,33 @@ def load_episodes(directory, limit=None, reverse=True):
+     return episodes
+ 
+ 
++def load_new_episodes(directory, episodes, prefix="recovery-"):
++    """Load externally written replay episodes into an existing cache.
++
++    Horizon FSD writes AutoDrive recovery demonstrations directly from env.reset().
++    Dreamer's sampler reads from the in-memory cache, so newly written files need
++    to be merged for the current run to learn from them.
++    """
++    directory = pathlib.Path(directory).expanduser()
++    added = 0
++    steps = 0
++    for filename in sorted(directory.glob(f"{prefix}*.npz")):
++        key = os.path.splitext(os.path.basename(filename))[0]
++        if key in episodes:
++            continue
++        try:
++            with filename.open("rb") as f:
++                episode = np.load(f)
++                episode = {k: episode[k] for k in episode.keys()}
++        except Exception as e:
++            print(f"Could not load external episode: {e}")
++            continue
++        episodes[key] = episode
++        added += 1
++        steps += len(episode["reward"]) - 1
++    return added, steps
++
++
+ class SampleDist:
+     def __init__(self, dist, samples=100):
+         self._dist = dist

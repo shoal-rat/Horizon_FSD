@@ -69,7 +69,7 @@ class TestForzaResetter(unittest.TestCase):
             ResetConfig(autodrive_min_displacement=10.0, press_gap_s=0.0),
         )
         resetter._position = lambda: (100.0, 200.0)
-        resetter._wait_autodrive_resolved = lambda start_pos: True
+        resetter._wait_autodrive_resolved = lambda start_pos: (True, False)
         self.assertTrue(resetter.autodrive_reset())
 
     def test_autodrive_accepts_optional_teleport_prompt_with_a(self):

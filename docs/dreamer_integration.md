@@ -117,3 +117,10 @@ recovery loop keeps tapping A while telemetry looks paused or stationary; if
 there is no prompt, it waits for AutoDrive to drive back to the route center.
 With `reset.autodrive_persistent: true`, live training waits and retries
 AutoDrive instead of stopping the process.
+
+When AutoDrive returns smoothly (no per-sample coordinate jump beyond
+`reset.autodrive_teleport_jump_m`), the recovery is saved as a `recovery-*.npz`
+Dreamer replay episode. The action labels come from FH telemetry, so they reflect
+ANNA's actual steer/throttle/brake sequence. If the game teleports the car, that
+segment is discarded as training data; the teleport is still accepted for
+recovery, but the policy should not learn a physically impossible transition.

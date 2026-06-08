@@ -63,7 +63,7 @@ def main() -> int:
     countdown(args.countdown, "switch to FH6 - the agent is about to take the wheel")
 
     cmd = [sys.executable, "dreamer.py", "--configs", "forza", "--logdir", args.logdir, *args.extra]
-    env = dict(os.environ, HORIZON_FSD_DIR=HFSD_DIR)
+    env = dict(os.environ, HORIZON_FSD_DIR=HFSD_DIR, HORIZON_FSD_LOGDIR=args.logdir)
     _keep_awake(True)                       # no sleep/screensaver for the whole run
     try:
         return subprocess.run(cmd, cwd=DREAMER_DIR, env=env).returncode

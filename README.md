@@ -93,7 +93,8 @@ Horizon_FSD/
 | **5** 🔧 | **DreamerV3 world-model RL** | env + reward + reset ladder + warm-start built; **supervised shakedown next** |
 
 > AutoDrive's controls land in the telemetry, so it doubles as a scalable data
-> engine. Reset uses FH6 rewind + reset-to-road. See `docs/dreamer_integration.md`.
+> engine. Recovery now prefers FH6 rewind + ANNA AutoDrive; smooth non-teleport
+> AutoDrive recoveries are saved as replay demos. See `docs/dreamer_integration.md`.
 
 ---
 

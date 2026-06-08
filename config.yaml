@@ -87,6 +87,17 @@ reset:
   autodrive_on_route_settle_s: 0.7
   autodrive_persistent: true
   autodrive_persistent_retry_s: 2.0
+  autodrive_teleport_jump_m: 30.0
+
+recovery_demos:
+  # Save smooth, non-teleport AutoDrive recoveries as Dreamer replay episodes.
+  # Teleport/prompt recoveries are used to keep training alive but are not teachable.
+  enabled: true
+  out_dir: "C:/Horizon_FSD/dreamer_logs/forza/train_eps"
+  min_len: 16
+  max_len: 1200
+  sample_hz: 10.0
+  teleport_jump_m: 30.0
 
 bc:                           # Phase 3 behavioral cloning
   backbone: "resnet18"        # timm backbone (e.g. resnet18, efficientnet_b0)

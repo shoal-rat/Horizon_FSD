@@ -17,6 +17,7 @@ ladder (rewind -> reset-to-road) to put the car back on the road.
 from __future__ import annotations
 
 import time
+import os
 
 import gym
 import numpy as np
@@ -27,6 +28,7 @@ from config import load_config
 from gamepad import ForzaGamepad
 from racing_line import LineReading, RacingLineReader
 from recovery import CrashDetector, ForzaResetter, ResetConfig
+from recovery_demo import RecoveryDemoConfig, RecoveryDemoRecorder
 from reward import DriveReward, DriveRewardConfig
 from telemetry_receiver import TelemetryReceiver
 
@@ -55,13 +57,28 @@ class ForzaDriveEnv:
         self.rx.start()
         self.gamepad = ForzaGamepad()
         self.detector = CrashDetector()
-        self.resetter = ForzaResetter(self.gamepad, self.rx, ResetConfig(**cfg.get("reset", {})))
         self.reward_fn = DriveReward(DriveRewardConfig(**cfg.get("rl_reward", {})))
+        self.line_reader = RacingLineReader()     # reads FH's driving line from the colour frame
+        demo_cfg_dict = dict(cfg.get("recovery_demos", {}))
+        if os.environ.get("HORIZON_FSD_LOGDIR"):
+            demo_cfg_dict["out_dir"] = os.path.join(os.environ["HORIZON_FSD_LOGDIR"], "train_eps")
+        demo_cfg = RecoveryDemoConfig(**demo_cfg_dict)
+        self.recovery_demo = RecoveryDemoRecorder(
+            self.capture,
+            self.line_reader,
+            self.reward_fn,
+            demo_cfg,
+        ) if demo_cfg.enabled else None
+        self.resetter = ForzaResetter(
+            self.gamepad,
+            self.rx,
+            ResetConfig(**cfg.get("reset", {})),
+            demo_recorder=self.recovery_demo,
+        )
         safety = cfg.get("rl_safety", {})
         self.steer_limit = float(safety.get("steer_limit", 0.55))
         self.high_speed_steer_limit = float(safety.get("high_speed_steer_limit", 0.35))
         self.high_speed_threshold = float(safety.get("high_speed_threshold", 15.0))
-        self.line_reader = RacingLineReader()     # reads FH's driving line from the colour frame
 
         self._prev_t = None
         self._prev_applied_action = np.zeros(3, dtype=np.float32)
