@@ -1,108 +1,114 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="640" viewBox="0 0 1180 640" role="img" aria-labelledby="t d">
-  <title id="t">AutoDrive recovery and learning loop</title>
-  <desc id="d">When the detector ends an episode, the recovery ladder opens ANNA AutoDrive. On-road it follows the route and the smooth escape is saved as a replay demonstration; far off-road a Fast Travel Warning prompt is confirmed with A only while the car is frozen; a drivable parallel road is accepted. Recovery is verified by telemetry before training resumes. A pause-menu reset is the last resort, and if everything fails the run pauses rather than crashing.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="660" viewBox="0 0 1180 660" role="img" aria-labelledby="title desc">
+  <title id="title">AutoDrive recovery loop</title>
+  <desc id="desc">Recovery flow for ended episodes: AutoDrive may drive back, open a transfer prompt, accept a parallel road, or fall back to reset and manual wait.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0a1322"/><stop offset=".55" stop-color="#0f2135"/><stop offset="1" stop-color="#0a141f"/></linearGradient>
-    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset=".5" stop-color="#34d399"/><stop offset="1" stop-color="#fbbf24"/></linearGradient>
-    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#000" flood-opacity=".45"/></filter>
-    <marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9fb6c5"/></marker>
-    <marker id="aG" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4cc79a"/></marker>
-    <marker id="aR" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ec6ca6"/></marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.55" stop-color="#0f2238"/>
+      <stop offset="1" stop-color="#0a141d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.48" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#000000" flood-opacity="0.40"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#9fb6c5"/>
+    </marker>
+    <marker id="arrowG" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#4ecb9a"/>
+    </marker>
+    <marker id="arrowP" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#ec6ca6"/>
+    </marker>
     <style>
-      .title{font:800 32px "Segoe UI",system-ui,Arial,sans-serif;fill:#f5f9ff}
-      .lede{font:500 15px "Segoe UI",Arial,sans-serif;fill:#a9c4dd}
-      .h{font:800 18px "Segoe UI",Arial,sans-serif;fill:#f3f8ff}
-      .t{font:500 13.5px "Segoe UI",Arial,sans-serif;fill:#c4d4e6}
-      .m{font:600 12px "Cascadia Mono",Consolas,monospace;fill:#bfe4f7}
-      .lbl{font:600 12px "Cascadia Mono",Consolas,monospace;fill:#9bb4d0}
-      .card{fill:rgba(16,28,47,.86);stroke:rgba(150,180,215,.30);stroke-width:1.2}
-      .red{stroke:#fb7185;stroke-width:1.7}.slate{stroke:rgba(150,180,215,.45);stroke-width:1.5}.green{stroke:#34d399;stroke-width:1.7}.violet{stroke:#a78bfa;stroke-width:1.7}.cyan{stroke:#38bdf8;stroke-width:1.7}.amber{stroke:#fbbf24;stroke-width:1.7}
-      .f{fill:none;stroke:#9fb6c5;stroke-width:2.5}.fr{fill:none;stroke:#ec6ca6;stroke-width:2.5}
-      .dash{fill:none;stroke:#7f97b6;stroke-width:2.1;stroke-dasharray:7 8}
+      .title { font: 800 34px "Segoe UI", Arial, sans-serif; fill: #f7fbff; }
+      .lede { font: 500 15px "Segoe UI", Arial, sans-serif; fill: #acc7dd; }
+      .head { font: 760 18px "Segoe UI", Arial, sans-serif; fill: #f4f9ff; }
+      .text { font: 520 13.5px "Segoe UI", Arial, sans-serif; fill: #c6d7e8; }
+      .mono { font: 650 12.5px "Cascadia Mono", Consolas, monospace; fill: #bfe9ff; }
+      .label { font: 650 12px "Cascadia Mono", Consolas, monospace; fill: #9eb9d2; }
+      .card { fill: rgba(13, 25, 42, 0.86); stroke: rgba(160, 190, 220, 0.32); stroke-width: 1.2; }
+      .red { stroke: #fb7185; }
+      .green { stroke: #34d399; }
+      .cyan { stroke: #38bdf8; }
+      .violet { stroke: #a78bfa; }
+      .amber { stroke: #fbbf24; }
+      .flow { fill: none; stroke: #9fb6c5; stroke-width: 2.5; }
+      .flowG { fill: none; stroke: #4ecb9a; stroke-width: 2.5; }
+      .flowP { fill: none; stroke: #ec6ca6; stroke-width: 2.5; }
+      .dash { fill: none; stroke: #8da8c4; stroke-width: 2.1; stroke-dasharray: 8 8; }
     </style>
   </defs>
 
-  <rect width="1180" height="640" rx="26" fill="url(#bg)"/>
-  <rect x="48" y="40" width="96" height="6" rx="3" fill="url(#line)"/>
-  <text class="title" x="46" y="84">Recovery — a safety net and a teacher</text>
-  <text class="lede" x="48" y="110">Only smooth AutoDrive escapes become replay. Teleports keep the run alive but are never learned as dynamics.</text>
+  <rect width="1180" height="660" rx="28" fill="url(#bg)"/>
+  <rect x="48" y="42" width="96" height="6" rx="3" fill="url(#accent)"/>
+  <text class="title" x="48" y="86">AutoDrive recovery</text>
+  <text class="lede" x="50" y="112">A smooth drive-back can be replay data. A teleport is only a way to keep the run alive.</text>
 
-  <!-- 1 episode ends -->
-  <g filter="url(#sh)"><rect class="card red" x="48" y="158" width="208" height="118" rx="18"/></g>
-  <circle cx="80" cy="194" r="16" fill="#2a1622" stroke="#fb7185" stroke-width="2"/><path d="M73 187 l14 14 M87 187 l-14 14" stroke="#fb7185" stroke-width="3" stroke-linecap="round"/>
-  <text class="h" x="106" y="192">Episode ends</text>
-  <text class="t" x="72" y="224">impact · stuck · flipped</text>
-  <text class="t" x="72" y="246">offroad · offroute · noprogress</text>
+  <g filter="url(#shadow)">
+    <rect class="card red" x="52" y="168" width="222" height="108" rx="18"/>
+    <rect class="card cyan" x="326" y="168" width="238" height="108" rx="18"/>
+    <rect class="card green" x="620" y="132" width="270" height="100" rx="18"/>
+    <rect class="card violet" x="620" y="270" width="270" height="100" rx="18"/>
+    <rect class="card cyan" x="620" y="408" width="270" height="100" rx="18"/>
+    <rect class="card green" x="940" y="224" width="190" height="116" rx="18"/>
+    <rect class="card amber" x="326" y="444" width="238" height="108" rx="18"/>
+    <rect class="card red" x="620" y="548" width="400" height="78" rx="18"/>
+    <rect class="card green" x="940" y="408" width="190" height="92" rx="18"/>
+  </g>
 
-  <!-- 2 autodrive -->
-  <g filter="url(#sh)"><rect class="card slate" x="300" y="158" width="216" height="118" rx="18"/></g>
-  <text class="h" x="324" y="192">ANNA AutoDrive</text>
-  <text class="t" x="324" y="222">primary — needs a waypoint</text>
-  <text class="m" x="324" y="252">D-pad Down &#8594; Left &#8594; A</text>
+  <text class="head" x="78" y="204">Episode ends</text>
+  <text class="text" x="78" y="230">impact, stuck, offroute</text>
+  <text class="mono" x="78" y="254">detector reason</text>
 
-  <!-- 3a drive-back (learned) -->
-  <g filter="url(#sh)"><rect class="card green" x="566" y="132" width="280" height="100" rx="16"/></g>
-  <text class="h" x="588" y="164">On-road &#8594; drive back</text>
-  <text class="t" x="588" y="190">follows the route line, smooth</text>
-  <text class="m" x="588" y="214" fill="#bdf3d8">save recovery-*.npz demo</text>
+  <text class="head" x="352" y="204">Open ANNA</text>
+  <text class="text" x="352" y="230">needs a pinned waypoint</text>
+  <text class="mono" x="352" y="254">Down, Left, A</text>
 
-  <!-- 3b teleport (safety) -->
-  <g filter="url(#sh)"><rect class="card violet" x="566" y="248" width="280" height="104" rx="16"/></g>
-  <text class="h" x="588" y="280">Far off-road &#8594; transfer prompt</text>
-  <text class="t" x="588" y="306">confirm A only while FROZEN</text>
-  <text class="m" x="588" y="332" fill="#d6caff">teleport = safety only</text>
+  <text class="head" x="646" y="168">Drive-back</text>
+  <text class="text" x="646" y="194">AutoDrive returns to route</text>
+  <text class="mono" x="646" y="216">save recovery-*.npz</text>
 
-  <!-- 3c offroute ok -->
-  <g filter="url(#sh)"><rect class="card cyan" x="566" y="368" width="280" height="100" rx="16"/></g>
-  <text class="h" x="588" y="400">Parallel road</text>
-  <text class="t" x="588" y="426">upright + drivable, just off route</text>
-  <text class="m" x="588" y="450" fill="#bfe4f7">accept (autodrive_offroute_ok)</text>
+  <text class="head" x="646" y="306">Transfer prompt</text>
+  <text class="text" x="646" y="332">press A only while frozen</text>
+  <text class="mono" x="646" y="354">teleport: safety only</text>
 
-  <!-- 4 verify -->
-  <g filter="url(#sh)"><rect class="card green" x="896" y="170" width="236" height="118" rx="18"/></g>
-  <text class="h" x="920" y="206">Verify + grace</text>
-  <text class="t" x="920" y="234">upright · on tarmac</text>
-  <text class="t" x="920" y="256">telemetry-gated</text>
-  <text class="m" x="920" y="280">1.5 s grace window</text>
+  <text class="head" x="646" y="444">Parallel road</text>
+  <text class="text" x="646" y="470">upright and drivable</text>
+  <text class="mono" x="646" y="492">accept if configured</text>
 
-  <!-- 5 resume -->
-  <g filter="url(#sh)"><rect class="card slate" x="896" y="326" width="236" height="92" rx="18"/></g>
-  <text class="h" x="920" y="362">Resume training</text>
-  <text class="t" x="920" y="390">next episode · keeps learning</text>
+  <text class="head" x="966" y="260">Verify</text>
+  <text class="text" x="966" y="286">upright, live UDP</text>
+  <text class="text" x="966" y="310">grace window</text>
 
-  <!-- 6 reset fallback -->
-  <g filter="url(#sh)"><rect class="card amber" x="300" y="430" width="216" height="104" rx="18"/></g>
-  <text class="h" x="324" y="464">Reset Car Position</text>
-  <text class="t" x="324" y="490">pause-menu · last resort</text>
-  <text class="m" x="324" y="516">Start &#8594; L3 &#8594; A</text>
+  <text class="head" x="352" y="480">Reset menu</text>
+  <text class="text" x="352" y="506">last automated fallback</text>
+  <text class="mono" x="352" y="530">Start, L3, A</text>
 
-  <!-- 7 pause & wait -->
-  <g filter="url(#sh)"><rect class="card red" x="566" y="506" width="396" height="104" rx="18"/></g>
-  <text class="h" x="588" y="540">Unroutable &#8594; pause, don't crash</text>
-  <text class="t" x="588" y="566">wait for a drivable car (you reposition it)</text>
-  <text class="m" x="588" y="590" fill="#ffc7d2">learner keeps training on replay</text>
+  <text class="head" x="646" y="584">Manual wait</text>
+  <text class="text" x="646" y="608">neutral pad; learner can train from replay</text>
 
-  <!-- flows -->
-  <path class="f" d="M256 217 H300" marker-end="url(#a)"/>
-  <path class="f" d="M516 196 C540 178 545 176 566 174" marker-end="url(#a)"/>
-  <path class="f" d="M516 218 C540 270 545 296 566 300" marker-end="url(#a)"/>
-  <path class="f" d="M516 238 C540 360 545 414 566 418" marker-end="url(#a)"/>
-  <path class="fg" d="M846 174 C876 192 882 210 896 218" marker-end="url(#aG)"/>
-  <path class="f" d="M846 300 C876 286 882 248 896 234" marker-end="url(#a)"/>
-  <path class="f" d="M846 418 C876 360 882 280 896 258" marker-end="url(#a)"/>
-  <path class="f" d="M1014 288 V326" marker-end="url(#a)"/>
-  <!-- resume loop back -->
-  <path class="dash" d="M896 372 C640 632 250 600 150 276" marker-end="url(#a)"/>
-  <!-- fallback rail -->
-  <path class="fr" d="M408 276 V430" marker-end="url(#aR)"/>
-  <path class="fr" d="M516 480 H566" marker-end="url(#aR)"/>
-  <!-- drivable -> resume -->
-  <path class="dash" d="M1004 506 V420" marker-end="url(#a)"/>
+  <text class="head" x="966" y="444">Resume</text>
+  <text class="text" x="966" y="472">next live episode</text>
 
-  <text class="lbl" x="262" y="208">recover()</text>
-  <text class="lbl" x="1024" y="316">verified</text>
-  <text class="lbl" x="158" y="450" fill="#9fb6c5">next episode</text>
-  <text class="lbl" x="420" y="380" fill="#ec6ca6">can't route</text>
-  <text class="lbl" x="522" y="474" fill="#ec6ca6">still failing</text>
-  <text class="lbl" x="1014" y="470">drivable</text>
+  <path class="flow" d="M274 222 H326" marker-end="url(#arrow)"/>
+  <path class="flowG" d="M564 206 C594 182 598 182 620 182" marker-end="url(#arrowG)"/>
+  <path class="flow" d="M564 222 C598 294 598 320 620 320" marker-end="url(#arrow)"/>
+  <path class="flow" d="M564 238 C598 398 598 458 620 458" marker-end="url(#arrow)"/>
+  <path class="flowG" d="M890 182 C922 190 926 248 940 270" marker-end="url(#arrowG)"/>
+  <path class="flow" d="M890 320 H940" marker-end="url(#arrow)"/>
+  <path class="flow" d="M890 458 C922 432 926 328 940 310" marker-end="url(#arrow)"/>
+  <path class="flowG" d="M1035 340 V408" marker-end="url(#arrowG)"/>
+  <path class="flowP" d="M445 276 V444" marker-end="url(#arrowP)"/>
+  <path class="flowP" d="M564 498 C594 540 598 586 620 586" marker-end="url(#arrowP)"/>
+  <path class="dash" d="M1020 586 C1090 560 1090 500 1035 500" marker-end="url(#arrow)"/>
+
+  <text class="label" x="284" y="212">recover()</text>
+  <text class="label" x="456" y="374">failed</text>
+  <text class="label" x="574" y="548">still stuck</text>
+  <text class="label" x="1048" y="382">verified</text>
 </svg>

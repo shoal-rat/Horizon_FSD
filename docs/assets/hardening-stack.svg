@@ -1,75 +1,105 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="600" viewBox="0 0 1180 600" role="img" aria-labelledby="t d">
-  <title id="t">Horizon FSD hardening stack</title>
-  <desc id="d">Six layers that keep training clean: live I/O freshness, benign halts, the route detector, the recovery state machine, DreamerV3 training, and stress-tested boundaries. The guiding principle is never to train on corrupted perception, impossible teleport dynamics, or stale telemetry.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="600" viewBox="0 0 1180 600" role="img" aria-labelledby="title desc">
+  <title id="title">Horizon FSD hardening stack</title>
+  <desc id="desc">Six checks that prevent stale input, bad detector states, and teleport dynamics from entering training data.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0a1322"/><stop offset=".55" stop-color="#0f2135"/><stop offset="1" stop-color="#0a141f"/></linearGradient>
-    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset=".5" stop-color="#34d399"/><stop offset="1" stop-color="#fbbf24"/></linearGradient>
-    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#000" flood-opacity=".45"/></filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.55" stop-color="#0f2238"/>
+      <stop offset="1" stop-color="#0a141d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.48" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
     <style>
-      .title{font:800 34px "Segoe UI",system-ui,Arial,sans-serif;fill:#f5f9ff}
-      .lede{font:500 15px "Segoe UI",Arial,sans-serif;fill:#a9c4dd}
-      .h{font:800 19px "Segoe UI",Arial,sans-serif;fill:#f3f8ff}
-      .t{font:500 14px "Segoe UI",Arial,sans-serif;fill:#c4d4e6}
-      .m{font:600 12.5px "Cascadia Mono",Consolas,monospace;fill:#cfe7f6}
-      .card{fill:rgba(16,28,47,.84);stroke:rgba(150,180,215,.26);stroke-width:1.2}
-      .foot{font:600 14px "Cascadia Mono",Consolas,monospace;fill:#dbeeff}
+      .title { font: 800 34px "Segoe UI", Arial, sans-serif; fill: #f7fbff; }
+      .lede { font: 500 15px "Segoe UI", Arial, sans-serif; fill: #acc7dd; }
+      .num { font: 800 15px "Segoe UI", Arial, sans-serif; fill: #07111f; }
+      .head { font: 760 19px "Segoe UI", Arial, sans-serif; fill: #f4f9ff; }
+      .text { font: 520 14px "Segoe UI", Arial, sans-serif; fill: #c6d7e8; }
+      .mono { font: 650 12.5px "Cascadia Mono", Consolas, monospace; fill: #bfe9ff; }
+      .card { fill: rgba(13, 25, 42, 0.84); stroke: rgba(160, 190, 220, 0.30); stroke-width: 1.2; }
+      .rule { stroke: rgba(160, 190, 220, 0.20); stroke-width: 1; }
     </style>
   </defs>
 
-  <rect width="1180" height="600" rx="26" fill="url(#bg)"/>
-  <rect x="48" y="40" width="96" height="6" rx="3" fill="url(#line)"/>
-  <text class="title" x="46" y="84">Hardening Stack</text>
-  <text class="lede" x="48" y="110">Every strange state becomes a benign pause, a verified recovery, or clean replay data — never a poisoned gradient.</text>
+  <rect width="1180" height="600" rx="28" fill="url(#bg)"/>
+  <rect x="48" y="42" width="96" height="6" rx="3" fill="url(#accent)"/>
+  <text class="title" x="48" y="86">Training data gates</text>
+  <text class="lede" x="50" y="112">The live loop either records a clean transition, recovers, or waits.</text>
 
-  <!-- row1 -->
-  <g filter="url(#sh)"><rect class="card" x="48" y="150" width="350" height="186" rx="18"/></g>
-  <rect x="48" y="150" width="7" height="186" rx="3.5" fill="#38bdf8"/>
-  <circle cx="96" cy="192" r="18" fill="#0e2236" stroke="#38bdf8" stroke-width="2"/><circle cx="96" cy="192" r="7" fill="none" stroke="#38bdf8" stroke-width="2.6"/><circle cx="96" cy="192" r="2" fill="#38bdf8"/>
-  <text class="h" x="128" y="186">Live I/O</text><text class="t" x="128" y="210">WGC frame age · fresh UDP</text>
-  <text class="t" x="74" y="262">stale telemetry &#8594; telemetry_lost</text>
-  <text class="t" x="74" y="288">frozen frame &#8594; frame_lost</text>
-  <text class="m" x="74" y="318">no stale observation reaches the model</text>
+  <g filter="url(#shadow)">
+    <rect class="card" x="50" y="154" width="330" height="156" rx="18"/>
+    <rect class="card" x="425" y="154" width="330" height="156" rx="18"/>
+    <rect class="card" x="800" y="154" width="330" height="156" rx="18"/>
+    <rect class="card" x="50" y="354" width="330" height="156" rx="18"/>
+    <rect class="card" x="425" y="354" width="330" height="156" rx="18"/>
+    <rect class="card" x="800" y="354" width="330" height="156" rx="18"/>
+  </g>
 
-  <g filter="url(#sh)"><rect class="card" x="415" y="150" width="350" height="186" rx="18"/></g>
-  <rect x="415" y="150" width="7" height="186" rx="3.5" fill="#34d399"/>
-  <text class="h" x="441" y="186">Route Detector</text>
-  <text class="t" x="441" y="214">impact · stuck · flipped · offroad</text>
-  <text class="t" x="441" y="240">offroute · noprogress · route_complete</text>
-  <text class="t" x="441" y="274">stuck needs zero world displacement</text>
-  <text class="m" x="441" y="312">teleport jumps re-anchor; stall ticks skip</text>
+  <g transform="translate(74 180)">
+    <circle cx="0" cy="0" r="18" fill="#38bdf8"/>
+    <text class="num" x="-5" y="6">1</text>
+    <text class="head" x="34" y="6">Fresh input</text>
+    <line class="rule" x1="0" y1="34" x2="282" y2="34"/>
+    <text class="text" x="0" y="64">Drop stale UDP packets.</text>
+    <text class="text" x="0" y="90">Stop on frozen frames.</text>
+    <text class="mono" x="0" y="124">telemetry_lost / frame_lost</text>
+  </g>
 
-  <g filter="url(#sh)"><rect class="card" x="782" y="150" width="350" height="186" rx="18"/></g>
-  <rect x="782" y="150" width="7" height="186" rx="3.5" fill="#fbbf24"/>
-  <text class="h" x="808" y="186">DreamerV3 Training</text>
-  <text class="t" x="808" y="214">async learner · train-lock snapshots</text>
-  <text class="t" x="808" y="240">forza (lean) · forza_full (bigger)</text>
-  <text class="t" x="808" y="274">cudnn.benchmark · clean shutdown</text>
-  <text class="m" x="808" y="312">offline pretrain when VRAM is tight</text>
+  <g transform="translate(449 180)">
+    <circle cx="0" cy="0" r="18" fill="#34d399"/>
+    <text class="num" x="-5" y="6">2</text>
+    <text class="head" x="34" y="6">Detector</text>
+    <line class="rule" x1="0" y1="34" x2="282" y2="34"/>
+    <text class="text" x="0" y="64">End bad episodes early.</text>
+    <text class="text" x="0" y="90">Do not reward reverse farming.</text>
+    <text class="mono" x="0" y="124">impact / offroute / noprogress</text>
+  </g>
 
-  <!-- row2 -->
-  <g filter="url(#sh)"><rect class="card" x="48" y="356" width="350" height="186" rx="18"/></g>
-  <rect x="48" y="356" width="7" height="186" rx="3.5" fill="#fb7185"/>
-  <text class="h" x="74" y="392">Benign Halts</text>
-  <text class="t" x="74" y="420">paused menu &#8594; pad neutralized</text>
-  <text class="t" x="74" y="446">render freeze &#8594; wait, don't learn</text>
-  <text class="t" x="74" y="480">recovery exhausted &#8594; pause, not crash</text>
-  <text class="m" x="74" y="518">an overnight run survives every hitch</text>
+  <g transform="translate(824 180)">
+    <circle cx="0" cy="0" r="18" fill="#fbbf24"/>
+    <text class="num" x="-5" y="6">3</text>
+    <text class="head" x="34" y="6">Teleport filter</text>
+    <line class="rule" x1="0" y1="34" x2="282" y2="34"/>
+    <text class="text" x="0" y="64">Large coordinate jumps reset state.</text>
+    <text class="text" x="0" y="90">They are never replay demos.</text>
+    <text class="mono" x="0" y="124">safety only</text>
+  </g>
 
-  <g filter="url(#sh)"><rect class="card" x="415" y="356" width="350" height="186" rx="18"/></g>
-  <rect x="415" y="356" width="7" height="186" rx="3.5" fill="#a78bfa"/>
-  <text class="h" x="441" y="392">Recovery State Machine</text>
-  <text class="t" x="441" y="420">AutoDrive primary · waypoint-pinned</text>
-  <text class="t" x="441" y="446">confirm A only while the car is frozen</text>
-  <text class="t" x="441" y="480">teleport = safety, never learned</text>
-  <text class="m" x="441" y="518">smooth drive-back &#8594; replay demo</text>
+  <g transform="translate(74 380)">
+    <circle cx="0" cy="0" r="18" fill="#fb7185"/>
+    <text class="num" x="-5" y="6">4</text>
+    <text class="head" x="34" y="6">Benign halt</text>
+    <line class="rule" x1="0" y1="34" x2="282" y2="34"/>
+    <text class="text" x="0" y="64">Neutralize the pad on pause.</text>
+    <text class="text" x="0" y="90">Wait instead of crashing.</text>
+    <text class="mono" x="0" y="124">manual help is allowed</text>
+  </g>
 
-  <g filter="url(#sh)"><rect class="card" x="782" y="356" width="350" height="186" rx="18"/></g>
-  <rect x="782" y="356" width="7" height="186" rx="3.5" fill="#22d3ee"/>
-  <text class="h" x="808" y="392">Stress-Tested Boundaries</text>
-  <text class="t" x="808" y="420">NaN / inf rejected at the parse line</text>
-  <text class="t" x="808" y="446">route seam &amp; open end handled</text>
-  <text class="t" x="808" y="480">braking is not impact</text>
-  <text class="m" x="808" y="518">55 unit + stress tests, green</text>
+  <g transform="translate(449 380)">
+    <circle cx="0" cy="0" r="18" fill="#a78bfa"/>
+    <text class="num" x="-5" y="6">5</text>
+    <text class="head" x="34" y="6">AutoDrive recovery</text>
+    <line class="rule" x1="0" y1="34" x2="282" y2="34"/>
+    <text class="text" x="0" y="64">Use the pinned waypoint.</text>
+    <text class="text" x="0" y="90">Press A only while frozen.</text>
+    <text class="mono" x="0" y="124">prompt or drive-back</text>
+  </g>
 
-  <text class="foot" x="590" y="578" text-anchor="middle" fill="#8fb3d4">principle&#8201;:&#8201; never train on corrupted perception, impossible teleport dynamics, or stale telemetry</text>
+  <g transform="translate(824 380)">
+    <circle cx="0" cy="0" r="18" fill="#22d3ee"/>
+    <text class="num" x="-5" y="6">6</text>
+    <text class="head" x="34" y="6">Stress tests</text>
+    <line class="rule" x1="0" y1="34" x2="282" y2="34"/>
+    <text class="text" x="0" y="64">NaN and inf are rejected.</text>
+    <text class="text" x="0" y="90">Route ends are covered.</text>
+    <text class="mono" x="0" y="124">55 tests passing</text>
+  </g>
+
+  <text class="mono" x="590" y="562" text-anchor="middle">rule: learn from clean motion, not stale input or teleports</text>
 </svg>

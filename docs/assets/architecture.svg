@@ -1,100 +1,113 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="660" viewBox="0 0 1180 660" role="img" aria-labelledby="t d">
-  <title id="t">Horizon FSD architecture</title>
-  <desc id="d">The closed control loop: Forza Horizon feeds frames and Data Out telemetry into perception and the environment, which drives DreamerV3 and a virtual gamepad back into the game. A replay buffer feeds the learner; the recovery ladder handles crashes and contributes demonstrations.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="660" viewBox="0 0 1180 660" role="img" aria-labelledby="title desc">
+  <title id="title">Horizon FSD architecture</title>
+  <desc id="desc">Architecture diagram showing Forza Horizon 6, capture and telemetry, the RL environment, DreamerV3, replay, recovery, and virtual gamepad output.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0a1322"/><stop offset=".55" stop-color="#0f2135"/><stop offset="1" stop-color="#0a141f"/></linearGradient>
-    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset=".5" stop-color="#34d399"/><stop offset="1" stop-color="#fbbf24"/></linearGradient>
-    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#000" flood-opacity=".45"/></filter>
-    <marker id="aC" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#56b9e6"/></marker>
-    <marker id="aA" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#f0b743"/></marker>
-    <marker id="aP" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ec6ca6"/></marker>
-    <marker id="aG" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4cc79a"/></marker>
-    <marker id="aS" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8aa3c0"/></marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.55" stop-color="#0f2238"/>
+      <stop offset="1" stop-color="#0a141d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.48" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <filter id="shadow" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#000000" flood-opacity="0.40"/>
+    </filter>
+    <marker id="arrowC" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#5dbfe8"/>
+    </marker>
+    <marker id="arrowG" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#4ecb9a"/>
+    </marker>
+    <marker id="arrowY" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#f2bd45"/>
+    </marker>
+    <marker id="arrowP" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#ec6ca6"/>
+    </marker>
     <style>
-      .title{font:800 34px "Segoe UI",system-ui,Arial,sans-serif;fill:#f5f9ff}
-      .lede{font:500 15px "Segoe UI",Arial,sans-serif;fill:#a9c4dd}
-      .h{font:800 19px "Segoe UI",Arial,sans-serif;fill:#f3f8ff}
-      .t{font:500 14px "Segoe UI",Arial,sans-serif;fill:#c4d4e6}
-      .m{font:600 12.5px "Cascadia Mono",Consolas,monospace;fill:#bfe4f7}
-      .lbl{font:600 12px "Cascadia Mono",Consolas,monospace;fill:#9bb4d0}
-      .card{fill:rgba(16,28,47,.82);stroke:rgba(150,180,215,.30);stroke-width:1.2}
-      .cC{stroke:#38bdf8;stroke-width:1.6}.cA{stroke:#fbbf24;stroke-width:1.6}.cP{stroke:#f472b6;stroke-width:1.6}.cG{stroke:#34d399;stroke-width:1.6}.cV{stroke:#a78bfa;stroke-width:1.6}
-      .fC{fill:none;stroke:#56b9e6;stroke-width:2.6}.fA{fill:none;stroke:#f0b743;stroke-width:2.6}.fP{fill:none;stroke:#ec6ca6;stroke-width:2.6}.fG{fill:none;stroke:#4cc79a;stroke-width:2.6}
-      .dash{fill:none;stroke:#8aa3c0;stroke-width:2.1;stroke-dasharray:7 7}
+      .title { font: 800 34px "Segoe UI", Arial, sans-serif; fill: #f7fbff; }
+      .lede { font: 500 15px "Segoe UI", Arial, sans-serif; fill: #acc7dd; }
+      .head { font: 760 19px "Segoe UI", Arial, sans-serif; fill: #f4f9ff; }
+      .text { font: 520 14px "Segoe UI", Arial, sans-serif; fill: #c6d7e8; }
+      .mono { font: 650 12.5px "Cascadia Mono", Consolas, monospace; fill: #bfe9ff; }
+      .label { font: 650 12px "Cascadia Mono", Consolas, monospace; fill: #9eb9d2; }
+      .card { fill: rgba(13, 25, 42, 0.84); stroke: rgba(160, 190, 220, 0.30); stroke-width: 1.2; }
+      .cyan { stroke: #38bdf8; }
+      .green { stroke: #34d399; }
+      .amber { stroke: #fbbf24; }
+      .pink { stroke: #f472b6; }
+      .violet { stroke: #a78bfa; }
+      .flowC { fill: none; stroke: #5dbfe8; stroke-width: 2.6; }
+      .flowG { fill: none; stroke: #4ecb9a; stroke-width: 2.6; }
+      .flowY { fill: none; stroke: #f2bd45; stroke-width: 2.6; }
+      .flowP { fill: none; stroke: #ec6ca6; stroke-width: 2.6; }
+      .dash { fill: none; stroke: #8da8c4; stroke-width: 2.2; stroke-dasharray: 8 8; }
     </style>
   </defs>
 
-  <rect width="1180" height="660" rx="26" fill="url(#bg)"/>
-  <rect x="48" y="40" width="96" height="6" rx="3" fill="url(#line)"/>
-  <text class="title" x="46" y="84">System Architecture</text>
-  <text class="lede" x="48" y="110">A live game wired as a robotics environment: perception in, DreamerV3 in the middle, gamepad out — closed loop.</text>
+  <rect width="1180" height="660" rx="28" fill="url(#bg)"/>
+  <rect x="48" y="42" width="96" height="6" rx="3" fill="url(#accent)"/>
+  <text class="title" x="48" y="86">System architecture</text>
+  <text class="lede" x="50" y="112">The game stays outside the process. Pixels and UDP come in; gamepad input goes out.</text>
 
-  <!-- FH6 source -->
-  <g filter="url(#sh)"><rect class="card cC" x="60" y="150" width="230" height="128" rx="18"/></g>
-  <rect x="84" y="176" width="48" height="40" rx="9" fill="#0e2236" stroke="#38bdf8" stroke-width="2"/><circle cx="108" cy="196" r="9" fill="none" stroke="#38bdf8" stroke-width="2.4"/><circle cx="108" cy="196" r="2.4" fill="#38bdf8"/>
-  <text class="h" x="150" y="186">Forza Horizon 6</text><text class="t" x="150" y="210">screen frames</text><text class="m" x="84" y="248">Data Out · 324-byte Car Dash</text>
+  <g filter="url(#shadow)">
+    <rect class="card cyan" x="56" y="154" width="260" height="118" rx="18"/>
+    <rect class="card cyan" x="56" y="330" width="260" height="118" rx="18"/>
+    <rect class="card green" x="388" y="238" width="270" height="150" rx="18"/>
+    <rect class="card amber" x="736" y="154" width="282" height="134" rx="18"/>
+    <rect class="card violet" x="736" y="360" width="282" height="120" rx="18"/>
+    <rect class="card pink" x="388" y="472" width="270" height="116" rx="18"/>
+    <rect class="card green" x="56" y="502" width="260" height="104" rx="18"/>
+  </g>
 
-  <!-- perception -->
-  <g filter="url(#sh)"><rect class="card cC" x="350" y="156" width="240" height="116" rx="18"/></g>
-  <text class="h" x="374" y="194">Perception</text>
-  <text class="t" x="374" y="220">capture.py · telemetry_receiver.py</text>
-  <text class="m" x="374" y="248">freshness-gated obs</text>
+  <text class="head" x="82" y="190">Forza Horizon 6</text>
+  <text class="text" x="82" y="218">screen frames</text>
+  <text class="mono" x="82" y="246">live game window</text>
 
-  <!-- env -->
-  <g filter="url(#sh)"><rect class="card" x="650" y="148" width="248" height="132" rx="18"/></g>
-  <text class="h" x="674" y="186">ForzaDriveEnv</text>
-  <text class="t" x="674" y="212">obs: image · speed · line</text>
-  <text class="t" x="674" y="234">reward: centerline progress</text>
-  <text class="m" x="674" y="260">done: 7 route-aware reasons</text>
+  <text class="head" x="82" y="366">Data Out</text>
+  <text class="text" x="82" y="394">324-byte Car Dash packet</text>
+  <text class="mono" x="82" y="422">speed, position, state</text>
 
-  <!-- replay -->
-  <g filter="url(#sh)"><rect class="card cV" x="958" y="250" width="168" height="150" rx="18"/></g>
-  <text class="h" x="980" y="288">Replay</text>
-  <text class="t" x="980" y="314">warm-start</text>
-  <text class="t" x="980" y="336">live rollouts</text>
-  <text class="t" x="980" y="358">AutoDrive demos</text>
-  <text class="m" x="980" y="384">one reward scale</text>
+  <text class="head" x="416" y="276">ForzaDriveEnv</text>
+  <text class="text" x="416" y="306">obs: image, speed, line</text>
+  <text class="text" x="416" y="330">reward: route progress</text>
+  <text class="mono" x="416" y="360">done: detector or halt</text>
 
-  <!-- dreamer -->
-  <g filter="url(#sh)"><rect class="card cA" x="650" y="372" width="248" height="150" rx="18"/></g>
-  <text class="h" x="674" y="410">DreamerV3</text>
-  <text class="t" x="674" y="436">world model + actor/critic</text>
-  <text class="t" x="674" y="458">async learner · train-lock save</text>
-  <text class="m" x="674" y="486">forza (lean) / forza_full</text>
+  <text class="head" x="764" y="192">DreamerV3</text>
+  <text class="text" x="764" y="222">world model and actor</text>
+  <text class="text" x="764" y="246">async learner</text>
+  <text class="mono" x="764" y="270">forza / forza_full</text>
 
-  <!-- recovery -->
-  <g filter="url(#sh)"><rect class="card cG" x="350" y="362" width="248" height="160" rx="18"/></g>
-  <rect x="374" y="388" width="42" height="46" rx="8" fill="#0e2236" stroke="#34d399" stroke-width="2"/><path d="M395 392 l16 6 v9 c0 11 -8 17 -16 21 c-8 -4 -16 -10 -16 -21 v-9 z" fill="none" stroke="#34d399" stroke-width="2"/>
-  <text class="h" x="430" y="396">Recovery</text>
-  <text class="t" x="430" y="420">ANNA AutoDrive ladder</text>
-  <text class="t" x="374" y="456">teleport prompt · drive-back</text>
-  <text class="m" x="374" y="498">smooth escape -&gt; replay demos</text>
+  <text class="head" x="764" y="398">Replay</text>
+  <text class="text" x="764" y="426">warm-start episodes</text>
+  <text class="text" x="764" y="450">live rollouts and demos</text>
 
-  <!-- gamepad -->
-  <g filter="url(#sh)"><rect class="card cP" x="60" y="396" width="230" height="126" rx="18"/></g>
-  <rect x="84" y="424" width="44" height="26" rx="11" fill="#0e2236" stroke="#f472b6" stroke-width="2"/><circle cx="94" cy="437" r="2.4" fill="#f472b6"/><circle cx="118" cy="437" r="2.4" fill="#f472b6"/>
-  <text class="h" x="146" y="430">Gamepad</text><text class="t" x="146" y="454">virtual Xbox 360</text><text class="m" x="84" y="500">steer · throttle · brake</text>
+  <text class="head" x="416" y="510">Virtual gamepad</text>
+  <text class="text" x="416" y="538">steer, throttle, brake</text>
+  <text class="mono" x="416" y="566">vgamepad / ViGEmBus</text>
 
-  <!-- flows -->
-  <path class="fC" d="M290 214 H350" marker-end="url(#aC)"/>
-  <path class="fC" d="M590 214 H650" marker-end="url(#aC)"/>
-  <path class="fA" d="M774 280 V372" marker-end="url(#aA)"/>
-  <path class="fP" d="M650 470 H300" marker-end="url(#aP)"/>
-  <path class="fP" d="M175 396 V278" marker-end="url(#aP)"/>
-  <path class="fG" d="M650 430 H598" marker-end="url(#aG)"/>
-  <path class="fG" d="M398 362 C300 320 230 310 175 278" marker-end="url(#aG)"/>
-  <path class="dash" d="M898 250 C940 232 940 232 958 270" marker-end="url(#aS)"/>
-  <path class="dash" d="M958 360 C918 380 900 388 898 410" marker-end="url(#aS)"/>
-  <path class="dash" d="M482 522 C660 600 980 596 1042 404" stroke="#4cc79a" marker-end="url(#aG)"/>
+  <text class="head" x="82" y="538">Recovery</text>
+  <text class="text" x="82" y="566">AutoDrive first</text>
+  <text class="mono" x="82" y="590">smooth drive-back only</text>
 
-  <!-- flow labels -->
-  <text class="lbl" x="296" y="204">frames + UDP</text>
-  <text class="lbl" x="596" y="204">obs</text>
-  <text class="lbl" x="784" y="334">transition</text>
-  <text class="lbl" x="430" y="460" fill="#ec6ca6">action</text>
-  <text class="lbl" x="186" y="344" fill="#ec6ca6">pad input</text>
-  <text class="lbl" x="300" y="300" fill="#4cc79a">episode ends</text>
-  <text class="lbl" x="906" y="240">store</text>
-  <text class="lbl" x="905" y="392">sample</text>
-  <text class="lbl" x="724" y="590" fill="#4cc79a">recovery demos</text>
+  <path class="flowC" d="M316 213 C350 213 350 276 388 276" marker-end="url(#arrowC)"/>
+  <path class="flowC" d="M316 389 C352 389 350 326 388 326" marker-end="url(#arrowC)"/>
+  <path class="flowG" d="M658 304 H736" marker-end="url(#arrowG)"/>
+  <path class="flowY" d="M877 288 V360" marker-end="url(#arrowY)"/>
+  <path class="flowP" d="M736 220 C694 220 700 530 658 530" marker-end="url(#arrowP)"/>
+  <path class="flowP" d="M388 530 H316" marker-end="url(#arrowP)"/>
+  <path class="flowG" d="M388 356 C330 450 292 502 244 502" marker-end="url(#arrowG)"/>
+  <path class="dash" d="M316 554 C506 638 916 612 916 480" marker-end="url(#arrowG)"/>
+  <path class="dash" d="M523 472 C598 430 646 404 736 420" marker-end="url(#arrowG)"/>
+  <path class="dash" d="M523 588 V632 H32 V214 C32 184 44 178 56 178" marker-end="url(#arrowP)"/>
+
+  <text class="label" x="335" y="204">frames</text>
+  <text class="label" x="335" y="412">telemetry</text>
+  <text class="label" x="674" y="294">transition</text>
+  <text class="label" x="688" y="210">action</text>
+  <text class="label" x="330" y="548">recover</text>
+  <text class="label" x="560" y="630">recovery demos</text>
 </svg>

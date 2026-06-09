@@ -1,79 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="460" viewBox="0 0 1280 460" role="img" aria-labelledby="t d">
-  <title id="t">Horizon FSD</title>
-  <desc id="d">Vision and telemetry self-driving research stack for Forza Horizon 6, built on DreamerV3 with a closed control loop: capture, telemetry, world model, and virtual gamepad.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="title desc">
+  <title id="title">Horizon FSD</title>
+  <desc id="desc">Hero banner for a Forza Horizon 6 self-driving project using screen capture, Data Out telemetry, DreamerV3, and a virtual gamepad.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0a1322"/><stop offset=".5" stop-color="#102439"/><stop offset="1" stop-color="#0a141f"/>
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.52" stop-color="#102844"/>
+      <stop offset="1" stop-color="#0a141d"/>
     </linearGradient>
-    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#38bdf8"/><stop offset=".5" stop-color="#34d399"/><stop offset="1" stop-color="#fbbf24"/>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#273b4c"/>
+      <stop offset="1" stop-color="#05070a"/>
     </linearGradient>
-    <radialGradient id="halo" cx=".5" cy=".5" r=".5">
-      <stop offset="0" stop-color="#1f3f66" stop-opacity=".75"/><stop offset="1" stop-color="#1f3f66" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="sh" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="7" stdDeviation="11" flood-color="#000" flood-opacity=".48"/></filter>
-    <filter id="glow" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.45" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000000" flood-opacity="0.34"/>
+    </filter>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
     <style>
-      .h{font:800 80px "Segoe UI",system-ui,Arial,sans-serif;fill:#f5f9ff;letter-spacing:-1.5px}
-      .tag{font:500 25px "Segoe UI",system-ui,Arial,sans-serif;fill:#aecbe6}
-      .chip{font:600 16px "Segoe UI",Arial,sans-serif;fill:#e6f1ff}
-      .node{font:700 18px "Segoe UI",Arial,sans-serif;fill:#eef6ff}
-      .sub{font:600 13px "Cascadia Mono",Consolas,monospace;fill:#9fc4dd}
-      .glass{fill:rgba(16,28,47,.72);stroke:rgba(150,180,215,.30)}
+      .title { font: 800 76px "Segoe UI", Arial, sans-serif; fill: #f7fbff; }
+      .subtitle { font: 500 25px "Segoe UI", Arial, sans-serif; fill: #bfd5e8; }
+      .chip { font: 650 15px "Segoe UI", Arial, sans-serif; fill: #edf7ff; }
+      .panel-title { font: 750 20px "Segoe UI", Arial, sans-serif; fill: #f4f9ff; }
+      .panel-text { font: 560 15px "Segoe UI", Arial, sans-serif; fill: #c7d7e8; }
+      .mono { font: 650 14px "Cascadia Mono", Consolas, monospace; fill: #bfe9ff; }
+      .glass { fill: rgba(12, 24, 40, 0.78); stroke: rgba(162, 190, 220, 0.28); stroke-width: 1.2; }
+      .road-line { fill: none; stroke: #fbbf24; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 18 18; }
+      .route { fill: none; stroke: url(#accent); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
     </style>
   </defs>
 
-  <rect width="1280" height="460" rx="30" fill="url(#bg)"/>
-  <ellipse cx="1010" cy="110" rx="470" ry="300" fill="url(#halo)"/>
-  <!-- faint speed streaks -->
-  <g stroke="#21466c" stroke-opacity=".5" stroke-linecap="round">
-    <line x1="1140" y1="58" x2="1232" y2="58" stroke-width="3"/>
-    <line x1="1095" y1="86" x2="1212" y2="86" stroke-width="2"/>
-    <line x1="1160" y1="116" x2="1238" y2="116" stroke-width="2"/>
+  <rect width="1280" height="440" rx="30" fill="url(#bg)"/>
+  <circle cx="1040" cy="86" r="190" fill="#1e4f75" opacity="0.18"/>
+  <circle cx="1160" cy="245" r="240" fill="#14503f" opacity="0.14"/>
+
+  <path d="M0 326 C180 282 315 286 460 322 C602 358 720 358 858 320 C1025 274 1166 278 1280 318 L1280 440 L0 440 Z" fill="#061019"/>
+  <path d="M230 440 C365 366 495 326 632 310 C780 293 934 315 1114 381 C1172 402 1228 424 1280 440 Z" fill="url(#road)"/>
+  <path class="road-line" d="M636 314 C656 346 686 394 714 440"/>
+  <path d="M584 316 C543 356 502 398 466 440" stroke="rgba(230, 242, 255, 0.24)" stroke-width="2" fill="none"/>
+  <path d="M666 315 C728 352 779 394 824 440" stroke="rgba(230, 242, 255, 0.24)" stroke-width="2" fill="none"/>
+
+  <g transform="translate(74 64)">
+    <rect width="118" height="6" rx="3" fill="url(#accent)"/>
+    <text class="title" x="0" y="92">Horizon FSD</text>
+    <text class="subtitle" x="2" y="134">FH6 self-driving with pixels, telemetry, and DreamerV3</text>
+
+    <g transform="translate(0 170)">
+      <g>
+        <rect class="glass" width="145" height="38" rx="19"/>
+        <circle cx="22" cy="19" r="5" fill="#34d399"/>
+        <text class="chip" x="38" y="25">Offline Solo</text>
+      </g>
+      <g transform="translate(162 0)">
+        <rect class="glass" width="152" height="38" rx="19"/>
+        <circle cx="22" cy="19" r="5" fill="#38bdf8"/>
+        <text class="chip" x="38" y="25">Data Out UDP</text>
+      </g>
+      <g transform="translate(332 0)">
+        <rect class="glass" width="142" height="38" rx="19"/>
+        <circle cx="22" cy="19" r="5" fill="#fbbf24"/>
+        <text class="chip" x="38" y="25">DreamerV3</text>
+      </g>
+      <g transform="translate(492 0)">
+        <rect class="glass" width="138" height="38" rx="19"/>
+        <circle cx="22" cy="19" r="5" fill="#f472b6"/>
+        <text class="chip" x="38" y="25">55 tests</text>
+      </g>
+    </g>
   </g>
 
-  <rect x="72" y="66" width="118" height="6" rx="3" fill="url(#line)"/>
-  <text class="h" x="69" y="158">Horizon FSD</text>
-  <text class="tag" x="74" y="200">Vision + telemetry self-driving for Forza Horizon 6 — DreamerV3, hardened.</text>
+  <g transform="translate(826 74)" filter="url(#shadow)">
+    <rect class="glass" width="360" height="250" rx="24"/>
+    <text class="panel-title" x="28" y="42">Live loop</text>
+    <text class="panel-text" x="28" y="74">screen capture</text>
+    <text class="panel-text" x="28" y="106">Data Out telemetry</text>
+    <text class="panel-text" x="28" y="138">world model policy</text>
+    <text class="panel-text" x="28" y="170">virtual gamepad</text>
 
-  <!-- status chips -->
-  <g transform="translate(74 226)" font-size="16">
-    <g><rect class="glass" width="158" height="40" rx="20"/><circle cx="24" cy="20" r="5" fill="#34d399"/><text class="chip" x="40" y="26">Offline Solo</text></g>
-    <g transform="translate(174 0)"><rect class="glass" width="166" height="40" rx="20"/><circle cx="24" cy="20" r="5" fill="#38bdf8"/><text class="chip" x="40" y="26">Real-time RL</text></g>
-    <g transform="translate(356 0)"><rect class="glass" width="196" height="40" rx="20"/><circle cx="24" cy="20" r="5" fill="#fbbf24"/><text class="chip" x="40" y="26">Shared 8&#8201;GB GPU</text></g>
-    <g transform="translate(568 0)"><rect class="glass" width="184" height="40" rx="20"/><circle cx="24" cy="20" r="5" fill="#a78bfa"/><text class="chip" x="40" y="26">55 unit + stress</text></g>
-  </g>
+    <path class="route" d="M205 180 C178 156 190 122 226 116 C260 110 284 88 270 58" filter="url(#glow)"/>
+    <circle cx="205" cy="180" r="8" fill="#38bdf8"/>
+    <circle cx="270" cy="58" r="8" fill="#fbbf24"/>
+    <rect x="218" y="92" width="58" height="34" rx="12" fill="#0b1725" stroke="#34d399" stroke-width="2"/>
+    <circle cx="235" cy="109" r="4" fill="#34d399"/>
+    <circle cx="259" cy="109" r="4" fill="#34d399"/>
 
-  <!-- closed-loop pipeline -->
-  <g transform="translate(74 300)">
-    <!-- racing-line connector -->
-    <path d="M138 56 H302 M440 56 H604 M742 56 H906" fill="none" stroke="url(#line)" stroke-width="5" stroke-linecap="round" filter="url(#glow)"/>
-    <!-- return loop -->
-    <path d="M1044 92 C1044 150 96 150 96 96" fill="none" stroke="#5e7da0" stroke-width="2.4" stroke-dasharray="7 8" stroke-linecap="round"/>
-    <text class="sub" x="470" y="146">closed loop — the agent drives the live game</text>
-
-    <!-- node 1: capture -->
-    <g filter="url(#sh)"><rect class="glass" x="0" y="20" width="138" height="74" rx="18"/></g>
-    <circle cx="40" cy="40" r="22" fill="#0e2236" stroke="#38bdf8" stroke-width="2"/>
-    <circle cx="40" cy="40" r="9" fill="none" stroke="#38bdf8" stroke-width="3"/><circle cx="40" cy="40" r="2.6" fill="#38bdf8"/>
-    <text class="node" x="22" y="72">Capture</text><text class="sub" x="22" y="89">64&#215;64 frame</text>
-
-    <!-- node 2: telemetry -->
-    <g filter="url(#sh)"><rect class="glass" x="302" y="20" width="138" height="74" rx="18"/></g>
-    <circle cx="342" cy="40" r="22" fill="#0e2236" stroke="#34d399" stroke-width="2"/>
-    <path d="M334 46 a10 10 0 0 1 16 0 M338 42 a5 5 0 0 1 8 0" fill="none" stroke="#34d399" stroke-width="2.6" stroke-linecap="round"/><circle cx="342" cy="46" r="2.4" fill="#34d399"/>
-    <text class="node" x="324" y="72">Telemetry</text><text class="sub" x="324" y="89">Data Out UDP</text>
-
-    <!-- node 3: dreamer -->
-    <g filter="url(#sh)"><rect class="glass" x="604" y="20" width="138" height="74" rx="18"/></g>
-    <circle cx="644" cy="40" r="22" fill="#0e2236" stroke="#fbbf24" stroke-width="2"/>
-    <g stroke="#fbbf24" stroke-width="2" fill="#fbbf24"><line x1="636" y1="34" x2="652" y2="46" stroke-linecap="round"/><line x1="652" y1="34" x2="636" y2="46" stroke-linecap="round"/><circle cx="636" cy="34" r="3"/><circle cx="652" cy="34" r="3"/><circle cx="636" cy="46" r="3"/><circle cx="652" cy="46" r="3"/><circle cx="644" cy="40" r="3.4"/></g>
-    <text class="node" x="626" y="72">DreamerV3</text><text class="sub" x="626" y="89">world model</text>
-
-    <!-- node 4: gamepad -->
-    <g filter="url(#sh)"><rect class="glass" x="906" y="20" width="138" height="74" rx="18"/></g>
-    <circle cx="946" cy="40" r="22" fill="#0e2236" stroke="#f472b6" stroke-width="2"/>
-    <rect x="934" y="34" width="24" height="13" rx="6.5" fill="none" stroke="#f472b6" stroke-width="2.4"/><circle cx="940" cy="40.5" r="1.6" fill="#f472b6"/><circle cx="952" cy="40.5" r="1.6" fill="#f472b6"/>
-    <text class="node" x="926" y="72">Gamepad</text><text class="sub" x="926" y="89">steer&#183;throttle&#183;brake</text>
+    <g transform="translate(28 196)">
+      <rect width="144" height="34" rx="10" fill="#0b1725" stroke="rgba(191, 233, 255, 0.30)"/>
+      <text class="mono" x="14" y="22">steer throttle brake</text>
+    </g>
   </g>
 </svg>
