@@ -12,14 +12,19 @@ Detection (debounced):
   * flipped : |roll|/|pitch| past upright for flip_seconds.
   * offroad : mean surface rumble high + slow for offroad_seconds.
 
-Reset ladder:
-  * impact/stuck near a barrier : REWIND first. This is the only option that reliably
-              backs out of an on-road guardrail hit.
-  * off-route/stuck fallback    : ANNA AutoDrive to the pinned route. If the game asks
-              to teleport to a nearby road, keep tapping A while telemetry looks paused
-              or stationary; otherwise wait while AutoDrive drives back to the center.
-  * legacy fallback             : pause-menu RESET CAR POSITION, kept for flipped cars
-              and builds where ANNA is unavailable.
+Three real game mechanics (do NOT conflate them):
+  * REWIND (Y)                   : rolls back a few seconds of your own path, upright. Fast
+              fix for a FRESH on-road impact or a just-happened flip (short rewind window).
+  * ANNA AutoDrive (Down,Left,A) : the PRIMARY recovery - ONE feature that branches on state:
+              - car FAR off-road -> a transfer PROMPT appears; A snaps the car to road centre,
+                then it drives.  (Telemetry signature: car FROZEN, then a >30 m position JUMP.)
+              - car ON a road but stuck -> NO prompt; it just drives along the route line.
+              So AutoDrive is ITSELF both the teleport (far) and the drive-back (stuck). It needs
+              a waypoint pinned to the route. We press A ONLY while the car is frozen in a short
+              post-open window (the prompt) and STOP the instant it teleports or starts driving -
+              tapping A into a live AutoDrive cancels it.
+  * Pause RESET CAR POSITION (Start,L3,A) : LAST-RESORT fallback only, for states AutoDrive
+              cannot route (water, deep wedge, ANNA unavailable). NOT the universal teleport.
 
 Every reset is TELEMETRY-GATED (poll Data Out until the car is live/on-road), not a fixed sleep.
 Requires FH6 damage = None/Cosmetic so rewind isn't greyed out.
@@ -148,17 +153,22 @@ class ResetConfig:
     confirm_check_s: float = 2.0      # after A, watch this long for the car to start driving itself
     autodrive_engaged_speed: float = 2.0  # m/s: car moving on its own (we hold neutral) = AutoDrive took over
     autodrive_min_displacement: float = 12.0 # legacy metric; route verification is authoritative
-    autodrive_prompt_retry_s: float = 1.0 # while stopped/menu-like, tap A for "teleport to nearby road"
-    autodrive_prompt_attempts: int = 12
+    autodrive_prompt_retry_s: float = 1.0 # gap between A taps while the teleport prompt is up
+    autodrive_prompt_attempts: int = 2    # the teleport prompt needs ONE A; cap low (was 12: it spammed
+    #                                       A into a live AutoDrive drive every time speed dipped, cancelling it)
+    autodrive_prompt_settle_s: float = 0.8 # don't A-tap until the car has been frozen this long (a real
+    #                                        prompt holds it still; the on-road drive branch starts moving)
+    autodrive_prompt_window_s: float = 3.0 # ... and only within this window after opening AutoDrive
     autodrive_reissue_s: float = 10.0 # no progress this long -> re-open ANNA AutoDrive
     autodrive_progress_min_m: float = 2.0
     autodrive_on_route_settle_s: float = 0.7
     autodrive_persistent: bool = True # keep training alive by waiting/retrying AutoDrive
     autodrive_persistent_retry_s: float = 2.0
     autodrive_teleport_jump_m: float = 30.0 # per-sample coordinate jump => teleport, not teachable
-    autodrive_break_s: float = 0.6    # after on-road, hold a control input this long to CANCEL the
-    #                                   lingering AutoDrive (~1s) before handing back, so the agent's
-    #                                   first real action isn't eaten by the leftover autopilot
+    autodrive_break_s: float = 1.0    # after on-road, hold a BRAKE input this long to CANCEL the lingering
+    #                                   AutoDrive (~1s to release) before handing back. Brake, not throttle:
+    #                                   AutoDrive places the car at road centre with no guaranteed heading,
+    #                                   so a throttle pulse would launch it (maybe into oncoming/a barrier)
     menu_open_s: float = 0.9
     confirm_dialog_s: float = 0.5
     settle_s: float = 1.5
@@ -172,12 +182,10 @@ class ResetConfig:
     require_route_if_available: bool = True
     escalate_window_s: float = 8.0    # a new crash within this of a reset = a "repeat"
     max_consecutive_rewinds: int = 2  # after this many quick repeats, fall to AutoDrive reset
-    # --- escalation: after the in-distribution methods (rewind/AutoDrive) keep failing, the car
-    #     is likely wedged/flipped where AutoDrive can't drive it out -> force a TELEPORT, which
-    #     recovers from ANY state. This is what stops the persistent loop hanging forever. ---
-    escalate_after_failures: int = 2  # full failed rounds before a teleport leads the ladder
+    # The pause RESET CAR POSITION is the last rung of every ladder (not a queue-jumping
+    # escalation), so a wedged/flipped car AutoDrive can't route reaches it each round.
     persistent_max_backoff_s: float = 15.0  # cap the persistent-retry backoff
-    heartbeat_every: int = 5          # log a warning every N failed rounds (visibility, not silent hang)
+    heartbeat_every: int = 5          # log a warning every N failed rounds (visibility, not a silent hang)
 
 
 class ForzaResetter:
@@ -262,24 +270,26 @@ class ForzaResetter:
         self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
 
     def _wait_autodrive_resolved(self, start_pos: Optional[tuple[float, float]]) -> tuple[bool, bool]:
-        """Wait for either AutoDrive to return to the route or the optional
-        teleport prompt to be accepted.
-
-        Telemetry cannot read the dialog text, so the signal is behavioral:
-        if the car is not live, not moving, or still far from the route, occasional
-        A taps are safe and useful. Once AutoDrive is moving, we stop tapping and
-        just wait for the route/on-road gate.
-        """
+        """Wait for AutoDrive to recover the car, telling its two branches apart from telemetry
+        alone (it can't read the prompt text):
+          * teleport branch (far off-road): the car stays FROZEN, then a >teleport_jump_m position
+            JUMP fires the instant A accepts the transfer prompt and snaps it to road centre.
+          * drive branch (on-road-stuck): no prompt, the car accumulates forward displacement.
+        A is pressed ONLY to accept the prompt - while the car is frozen, after a short settle, in a
+        bounded window, capped. We STOP for good the instant it teleports OR starts driving, so we
+        never tap A into a live AutoDrive drive (a stray A there cancels it). Returns
+        (recovered, teleported)."""
         c = self.cfg
         t0 = time.perf_counter()
         last_a = t0 - c.autodrive_prompt_retry_s
         last_reissue = t0
         last_progress = t0
+        prev_pos = start_pos
         last_pos = start_pos
-        teleport_pos = start_pos
         teleported = False
+        driving = False                        # car has actually moved => AutoDrive engaged (or teleport fired)
         route_seen_since: Optional[float] = None
-        prompt_attempts_left = c.autodrive_prompt_attempts
+        prompt_presses = 0
 
         while time.perf_counter() - t0 < c.autodrive_timeout_s:
             now = time.perf_counter()
@@ -296,27 +306,35 @@ class ForzaResetter:
                 route_seen_since = None
 
             pos = self._position()
-            if self._displacement(teleport_pos, pos) > c.autodrive_teleport_jump_m:
-                teleported = True
+            if self._displacement(prev_pos, pos) > c.autodrive_teleport_jump_m:
+                teleported = True              # a discrete snap to road centre = the prompt was accepted
             if pos is not None:
-                teleport_pos = pos
+                prev_pos = pos
+            if self._displacement(start_pos, pos) >= c.autodrive_progress_min_m:
+                driving = True                 # net displacement => AutoDrive is driving; stop touching A
             if self._displacement(last_pos, pos) >= c.autodrive_progress_min_m:
                 last_pos = pos
                 last_progress = now
 
-            moving = bool(t is not None and t.is_driving and t.speed >= c.autodrive_engaged_speed)
-            prompt_like = t is None or not t.is_driving or not moving
-            if prompt_like and prompt_attempts_left > 0 and now - last_a >= c.autodrive_prompt_retry_s:
+            # Accept the teleport PROMPT only: frozen (no net displacement), after a settle, within the
+            # window, capped. Once it teleports OR drives, NEVER tap A again (that would cancel AutoDrive).
+            elapsed = now - t0
+            if (not teleported and not driving
+                    and c.autodrive_prompt_settle_s <= elapsed < c.autodrive_prompt_window_s
+                    and prompt_presses < c.autodrive_prompt_attempts
+                    and now - last_a >= c.autodrive_prompt_retry_s):
                 self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
                 last_a = now
-                prompt_attempts_left -= 1
+                prompt_presses += 1
 
-            if now - last_progress >= c.autodrive_reissue_s and now - last_reissue >= c.autodrive_reissue_s:
+            # AutoDrive never engaged (no waypoint / unreachable) -> re-open ANNA once, then let the
+            # timeout fall through so recover() drops to the pause-reset fallback.
+            if (not driving and not teleported
+                    and now - last_progress >= c.autodrive_reissue_s
+                    and now - last_reissue >= c.autodrive_reissue_s):
                 self._open_autodrive()
                 last_reissue = now
                 last_progress = now
-                last_a = now
-                prompt_attempts_left = c.autodrive_prompt_attempts
 
             time.sleep(0.05)
         return False, teleported
@@ -335,22 +353,6 @@ class ForzaResetter:
         dx, dz = b[0] - a[0], b[1] - a[1]
         return (dx * dx + dz * dz) ** 0.5
 
-    def _confirm_autodrive(self) -> bool:
-        """Tap A to confirm AutoDrive; the tap is sometimes dropped, so retry until the car
-        starts driving ITSELF (speed rises while we hold neutral = AutoDrive took over).
-        Catching a missed A in ~2s beats burning the full on-road timeout waiting for a car
-        that was never handed to AutoDrive."""
-        c = self.cfg
-        for _ in range(c.confirm_attempts):
-            self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
-            t0 = time.perf_counter()
-            while time.perf_counter() - t0 < c.confirm_check_s:
-                t = self.rx.latest()
-                if t is not None and t.is_driving and t.speed >= c.autodrive_engaged_speed:
-                    return True
-                time.sleep(0.05)
-        return False
-
     # ---- macros ----------------------------------------------------------
     def rewind(self) -> bool:
         c = self.cfg
@@ -359,7 +361,9 @@ class ForzaResetter:
             self.pad.tap_button(c.rewind_button)
             time.sleep(c.press_gap_s)
         time.sleep(c.rewind_settle_s)                # wait for the rewind to FINISH
-        self.pad.tap_button(c.confirm_button)        # A to resume
+        t = self.rx.latest()                         # only A-resume if still in the rewind/timeline UI;
+        if t is None or not t.is_driving:            # if rewind already handed back, A would hit the live world
+            self.pad.tap_button(c.confirm_button)
         return self._wait_recovered(require_speed=c.min_recovered_speed)
 
     def autodrive_reset(self) -> bool:
@@ -375,10 +379,11 @@ class ForzaResetter:
             self.demo_recorder.end(success, teleported=teleported)
         if not success:
             return False
-        # Break the lingering AutoDrive: a control input cancels it, but it takes ~1s to
-        # fully release. Hold light throttle so the handoff isn't "missed" (the agent's
-        # first action ignored), then neutral -> the episode resumes in clean control.
-        self.pad.apply([0.0, 0.3, 0.0])
+        # Cancel the lingering AutoDrive (any input cancels it; it takes ~1s to release). Use a
+        # BRAKE, not throttle: AutoDrive drops the car at road centre with no guaranteed heading,
+        # so a throttle pulse would launch it (maybe into oncoming traffic / a barrier). Brake
+        # cancels just as well and hands back a settled car, then neutral.
+        self.pad.apply([0.0, 0.0, 0.4])
         time.sleep(c.autodrive_break_s)
         self.pad.reset()
         return True
@@ -413,37 +418,45 @@ class ForzaResetter:
     def recover(self, reason: str, max_attempts: int = 3) -> str:
         """Run the reset ladder. Returns the method that worked, else 'FAILED'.
 
-        ESCALATING: try the in-distribution method for the failure type first (rewind /
-        AutoDrive). If those keep failing, the car is likely wedged or flipped where AutoDrive
-        cannot drive it out, so a TELEPORT (reset position) is forced to the front of the ladder
-        - it recovers from ANY state. With autodrive_persistent=True (unattended training) this
-        never returns FAILED and never hangs silently on AutoDrive alone: it keeps escalating
-        with capped backoff and a periodic heartbeat log.
+        AutoDrive is the PRIMARY recovery - it internally teleports (far) or drives back (on-road
+        stuck), so there is no separate teleport rung above it. The pause-menu RESET CAR POSITION
+        is the LAST rung of every ladder (a genuine fallback for states AutoDrive can't route, NOT
+        a queue-jumping escalation). Rewind leads for a FRESH on-road impact / just-happened flip.
+        With autodrive_persistent=True (unattended training) this never returns FAILED and never
+        hangs silently: each round re-runs the full ladder (ending in the pause reset) with capped
+        backoff and a periodic heartbeat log.
         """
         c = self.cfg
         rewind = ("rewind", self.rewind)
         autodrive = ("autodrive", self.autodrive_reset)
-        teleport = [("reset_position", self.reset_position), ("reset_to_road", self.reset_to_road)]
+        pause_reset = [("reset_position", self.reset_position), ("reset_to_road", self.reset_to_road)]
 
-        # in-distribution first choice per failure type (AutoDrive cannot un-flip a car, so a
-        # flipped/unknown state leads with a teleport)
-        if reason in ("impact", "stuck"):
-            primary = [rewind, autodrive]
-        elif reason == "offroad":
-            primary = [autodrive]
+        # AutoDrive's transfer branch rights a far-off-road car, so flipped also tries it; rewind
+        # leads for the recent-flip / fresh-impact cases. Pause reset is always the final fallback.
+        if reason in ("impact", "stuck", "flipped"):
+            ladder = [rewind, autodrive] + pause_reset
+        else:                                       # offroad / unknown
+            ladder = [autodrive] + pause_reset
+
+        # Don't rewind-loop into the same wall: after max_consecutive_rewinds quick repeats, drop
+        # rewind and go straight to AutoDrive.
+        now0 = time.perf_counter()
+        if reason in ("impact", "stuck", "flipped") and now0 - self._last_recovery_time < c.escalate_window_s:
+            self._consecutive_rewinds += 1
         else:
-            primary = teleport + [autodrive]
+            self._consecutive_rewinds = 0
+        if self._consecutive_rewinds > c.max_consecutive_rewinds:
+            ladder = [m for m in ladder if m[0] != "rewind"]
 
         start = time.perf_counter()
         attempt = 0
         while True:
             attempt += 1
-            escalating = attempt > c.escalate_after_failures
-            order = (teleport + primary) if escalating else primary  # teleport leads once escalating
-            for name, fn in order:
+            for name, fn in ladder:
                 try:
                     if fn():
-                        return name + ("+esc" if escalating else "")
+                        self._last_recovery_time = time.perf_counter()
+                        return name
                 except Exception:  # pragma: no cover
                     logger.exception("%s recovery error", name)
 
@@ -453,7 +466,7 @@ class ForzaResetter:
             if attempt % max(1, c.heartbeat_every) == 0:
                 logger.warning(
                     "recovery still failing: reason=%s attempts=%d elapsed=%.0fs - car may be "
-                    "wedged/flipped; escalating to teleport and backing off", reason, attempt,
+                    "unroutable; retrying ladder (incl. pause reset) with backoff", reason, attempt,
                     time.perf_counter() - start)
             time.sleep(min(c.autodrive_persistent_retry_s * (1 + attempt // max(1, c.heartbeat_every)),
                            c.persistent_max_backoff_s))

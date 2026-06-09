@@ -129,27 +129,24 @@ class TestForzaResetter(unittest.TestCase):
         t = FakeTelemetry(speed=6.0, mean_surface_rumble=0.0)
         self.assertTrue(resetter._is_recovered(t, require_speed=3.0))
 
-    def test_recover_escalates_to_teleport_when_autodrive_keeps_failing(self):
-        # AutoDrive/rewind can't fix a wedged or flipped car; recover() must escalate to a
-        # teleport instead of looping on AutoDrive forever.
+    def test_recover_falls_through_to_pause_reset_when_autodrive_fails(self):
+        # AutoDrive is the primary recovery (it teleports-far / drives-stuck itself); the pause
+        # reset is the LAST rung. When rewind + AutoDrive fail, the ladder falls to the pause reset.
         resetter = ForzaResetter(
             FakePad(), FakeRx(),
-            ResetConfig(escalate_after_failures=1, autodrive_persistent_retry_s=0.0,
-                        heartbeat_every=1000),
+            ResetConfig(autodrive_persistent_retry_s=0.0, heartbeat_every=1000),
         )
         resetter.rewind = lambda: False
         resetter.autodrive_reset = lambda: False
         resetter.reset_to_road = lambda: False
-        resetter.reset_position = lambda: True          # only the teleport works
-        result = resetter.recover("stuck")
-        self.assertTrue(result.startswith("reset_position"))
-        self.assertIn("esc", result)                    # reached via escalation, not the primary ladder
+        resetter.reset_position = lambda: True          # only the pause reset works
+        self.assertEqual(resetter.recover("stuck"), "reset_position")
 
     def test_recover_non_persistent_returns_failed_when_nothing_works(self):
         resetter = ForzaResetter(
             FakePad(), FakeRx(),
             ResetConfig(autodrive_persistent=False, autodrive_persistent_retry_s=0.0,
-                        escalate_after_failures=1, heartbeat_every=1000),
+                        heartbeat_every=1000),
         )
         for name in ("rewind", "autodrive_reset", "reset_position", "reset_to_road"):
             setattr(resetter, name, lambda: False)
