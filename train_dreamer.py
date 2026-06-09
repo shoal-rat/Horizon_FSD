@@ -15,6 +15,8 @@ Run:
     .\\.venv\\Scripts\\python.exe offline_pretrain_dreamer.py --updates 200
     .\\.venv\\Scripts\\python.exe train_dreamer.py
     .\\.venv\\Scripts\\python.exe train_dreamer.py --logdir C:\\Horizon_FSD\\dreamer_logs\\forza
+    # bigger model once the GPU has headroom (see docs/performance_and_hardening.md):
+    .\\.venv\\Scripts\\python.exe train_dreamer.py --config forza_full
 """
 from __future__ import annotations
 
@@ -49,6 +51,9 @@ def _keep_awake(on: bool) -> None:
 def main() -> int:
     p = argparse.ArgumentParser(description="Train DreamerV3 on the FH6 env.")
     p.add_argument("--logdir", default=r"C:\Horizon_FSD\dreamer_logs\forza")
+    p.add_argument("--config", default="forza",
+                   help="Dreamer config block: 'forza' (lean, shares GPU with FH6) or "
+                        "'forza_full' (bigger model + train_ratio 64; needs GPU headroom).")
     p.add_argument("--countdown", type=float, default=8.0)
     p.add_argument("extra", nargs="*", help="Extra --key value overrides passed to dreamer.py.")
     args = p.parse_args()
@@ -62,7 +67,7 @@ def main() -> int:
     print(f" logdir: {args.logdir}")
     countdown(args.countdown, "switch to FH6 - the agent is about to take the wheel")
 
-    cmd = [sys.executable, "dreamer.py", "--configs", "forza", "--logdir", args.logdir, *args.extra]
+    cmd = [sys.executable, "dreamer.py", "--configs", args.config, "--logdir", args.logdir, *args.extra]
     env = dict(os.environ, HORIZON_FSD_DIR=HFSD_DIR, HORIZON_FSD_LOGDIR=args.logdir)
     _keep_awake(True)                       # no sleep/screensaver for the whole run
     try:
