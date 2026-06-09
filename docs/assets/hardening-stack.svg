@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">Horizon FSD hardening stack</title>
+  <desc id="desc">A polished diagram showing telemetry, capture, detector, recovery, replay, and DreamerV3 hardening layers.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111f"/><stop offset=".55" stop-color="#0f2437"/><stop offset="1" stop-color="#08111a"/></linearGradient>
+    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#22c55e"/></linearGradient>
+    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#facc15"/><stop offset="1" stop-color="#fb7185"/></linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="4" result="x"/><feMerge><feMergeNode in="x"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style>
+      .title{font:800 34px Segoe UI,Arial,sans-serif;fill:#fff}.sub{font:500 15px Segoe UI,Arial,sans-serif;fill:#c9d8e6}.h{font:800 19px Segoe UI,Arial,sans-serif;fill:#f8fafc}.t{font:500 14px Segoe UI,Arial,sans-serif;fill:#cbd5e1}.m{font:650 13px Cascadia Mono,Consolas,monospace;fill:#dff6ff}.card{fill:rgba(15,23,42,.86);stroke:rgba(148,163,184,.34);stroke-width:1.2}.line{fill:none;stroke:#9cc8d9;stroke-width:2.4;stroke-linecap:round}.dash{fill:none;stroke:rgba(156,200,217,.45);stroke-width:2.2;stroke-dasharray:8 9;stroke-linecap:round}.pill{fill:rgba(255,255,255,.08);stroke:rgba(255,255,255,.18)}
+    </style>
+  </defs>
+  <rect width="1180" height="620" rx="26" fill="url(#bg)"/>
+  <text class="title" x="46" y="56">Hardening Stack</text>
+  <text class="sub" x="48" y="84">Every strange state becomes either a benign pause, a verified recovery, or clean replay data.</text>
+
+  <g transform="translate(54 130)"><rect class="card" width="245" height="126" rx="20"/><circle cx="48" cy="46" r="24" fill="url(#a)" filter="url(#glow)"/><path d="M36 47h24M48 35v24" stroke="#07111f" stroke-width="6" stroke-linecap="round"/><text class="h" x="88" y="38">Live I/O</text><text class="t" x="88" y="66">WGC frame age</text><text class="t" x="88" y="90">fresh UDP telemetry</text><text class="m" x="24" y="111">no stale observations</text></g>
+  <g transform="translate(54 330)"><rect class="card" width="245" height="140" rx="20"/><circle cx="48" cy="48" r="24" fill="url(#b)" filter="url(#glow)"/><path d="M34 48h28" stroke="#111827" stroke-width="6" stroke-linecap="round"/><text class="h" x="88" y="38">Benign Halts</text><text class="t" x="88" y="66">paused menu</text><text class="t" x="88" y="90">frame_lost</text><text class="t" x="88" y="114">telemetry_lost</text></g>
+
+  <g transform="translate(370 95)"><rect class="card" width="300" height="160" rx="22"/><text class="h" x="26" y="40">Route Detector</text><text class="t" x="26" y="70">impact, stuck, flipped</text><text class="t" x="26" y="94">offroad + offroute</text><text class="t" x="26" y="118">noprogress + route_complete</text><text class="m" x="26" y="143">teleport jumps re-anchor</text></g>
+  <g transform="translate(370 330)"><rect class="card" width="300" height="160" rx="22"/><text class="h" x="26" y="40">Recovery State Machine</text><text class="t" x="26" y="70">AutoDrive primary</text><text class="t" x="26" y="94">A only while frozen</text><text class="t" x="26" y="118">prompt jump is safety only</text><text class="m" x="26" y="143">smooth drive-back -> replay</text></g>
+
+  <g transform="translate(750 122)"><rect class="card" width="350" height="132" rx="22"/><text class="h" x="26" y="40">DreamerV3 Training</text><text class="t" x="26" y="70">async learner, train-lock snapshots</text><text class="t" x="26" y="94">lean forza + bigger forza_full</text><text class="m" x="26" y="116">low VRAM path: offline pretrain</text></g>
+  <g transform="translate(750 330)"><rect class="card" width="350" height="160" rx="22"/><text class="h" x="26" y="40">Stress-Tested Boundaries</text><text class="t" x="26" y="70">NaN / inf parse rejection</text><text class="t" x="26" y="94">route seam and open end</text><text class="t" x="26" y="118">braking is not impact</text><text class="m" x="26" y="143">52 tests before publish</text></g>
+
+  <path class="line" d="M299 193 C330 170 343 160 370 160"/><path class="line" d="M520 255 V330"/><path class="line" d="M670 175 C704 172 720 172 750 178"/><path class="line" d="M670 410 C705 405 720 404 750 402"/><path class="dash" d="M299 390 C330 375 343 374 370 386"/><path class="dash" d="M925 254 V330"/>
+
+  <g transform="translate(104 520)"><rect class="pill" width="970" height="54" rx="27"/><text class="m" x="28" y="34">principle: never train on corrupted perception, impossible teleport dynamics, or stale telemetry</text></g>
+</svg>

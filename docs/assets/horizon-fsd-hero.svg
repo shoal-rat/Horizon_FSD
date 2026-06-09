@@ -1,87 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="title desc">
   <title id="title">Horizon FSD hero banner</title>
-  <desc id="desc">A stylized road, telemetry stream, DreamerV3 world model, and virtual gamepad loop for a Forza Horizon self-driving research project.</desc>
+  <desc id="desc">Stylized midnight road with telemetry, DreamerV3, AutoDrive recovery, and virtual gamepad loop.</desc>
   <defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#08111f"/>
-      <stop offset="0.48" stop-color="#10233a"/>
-      <stop offset="1" stop-color="#07131b"/>
-    </linearGradient>
-    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1e3141"/>
-      <stop offset="1" stop-color="#080b10"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#58d6ff"/>
-      <stop offset="0.55" stop-color="#7cf7b4"/>
-      <stop offset="1" stop-color="#ffd166"/>
-    </linearGradient>
-    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="5" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <style>
-      .small { font: 500 18px "Segoe UI", Arial, sans-serif; fill: #b9c9d6; }
-      .label { font: 700 20px "Segoe UI", Arial, sans-serif; fill: #edf7ff; }
-      .title { font: 800 70px "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: .5px; }
-      .subtitle { font: 500 25px "Segoe UI", Arial, sans-serif; fill: #d7e6f0; }
-      .mono { font: 600 17px "Cascadia Mono", Consolas, monospace; fill: #9ee8ff; }
-      .chip { fill: rgba(255,255,255,.08); stroke: rgba(255,255,255,.18); stroke-width: 1; }
-      .line { fill: none; stroke: url(#accent); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-      .mutedLine { fill: none; stroke: rgba(255,255,255,.22); stroke-width: 2; stroke-linecap: round; }
-    </style>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#050b16"/><stop offset=".45" stop-color="#10243a"/><stop offset="1" stop-color="#07121a"/></linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#20364a"/><stop offset="1" stop-color="#05070b"/></linearGradient>
+    <linearGradient id="neon" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset=".48" stop-color="#22c55e"/><stop offset="1" stop-color="#facc15"/></linearGradient>
+    <filter id="g" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style>.title{font:900 76px Segoe UI,Arial,sans-serif;fill:#fff}.sub{font:520 25px Segoe UI,Arial,sans-serif;fill:#d8e7f3}.small{font:650 17px Segoe UI,Arial,sans-serif;fill:#dcecff}.mono{font:700 16px Cascadia Mono,Consolas,monospace;fill:#baf3ff}.chip{fill:rgba(255,255,255,.09);stroke:rgba(255,255,255,.22)}.wire{fill:none;stroke:url(#neon);stroke-width:4;stroke-linecap:round;stroke-linejoin:round}</style>
   </defs>
-
-  <rect width="1280" height="420" rx="28" fill="url(#sky)"/>
-  <path d="M0 305 C180 250 296 251 432 300 C560 346 681 346 820 305 C1001 252 1141 252 1280 296 L1280 420 L0 420 Z" fill="#071016"/>
-  <path d="M226 420 C356 352 467 317 590 299 C716 280 842 287 1010 338 C1102 366 1195 394 1280 420 Z" fill="url(#road)"/>
-  <path d="M661 300 C710 322 760 350 815 420" class="mutedLine"/>
-  <path d="M593 302 C560 332 521 374 480 420" class="mutedLine"/>
-  <path d="M640 303 C665 334 690 373 714 420" stroke="#ffd166" stroke-width="5" stroke-dasharray="20 20" stroke-linecap="round"/>
-
-  <g opacity=".42">
-    <circle cx="147" cy="96" r="96" fill="#1b3d5a"/>
-    <circle cx="1111" cy="110" r="132" fill="#15354c"/>
-    <path d="M60 240 C210 188 364 188 510 242" class="mutedLine"/>
-    <path d="M830 248 C950 190 1095 196 1225 256" class="mutedLine"/>
-  </g>
-
-  <g transform="translate(70 58)">
-    <text class="title" x="0" y="68">Horizon FSD</text>
-    <text class="subtitle" x="4" y="112">Vision, telemetry, and DreamerV3 control for FH6 research</text>
-    <g transform="translate(5 150)">
-      <rect class="chip" x="0" y="0" width="180" height="42" rx="21"/>
-      <text class="small" x="22" y="27">screen pixels</text>
-      <rect class="chip" x="198" y="0" width="172" height="42" rx="21"/>
-      <text class="small" x="220" y="27">Data Out UDP</text>
-      <rect class="chip" x="388" y="0" width="160" height="42" rx="21"/>
-      <text class="small" x="414" y="27">DreamerV3</text>
-      <rect class="chip" x="566" y="0" width="180" height="42" rx="21"/>
-      <text class="small" x="592" y="27">virtual pad</text>
-    </g>
-  </g>
-
-  <g transform="translate(810 72)">
-    <rect x="0" y="0" width="350" height="218" rx="24" fill="rgba(6,15,24,.72)" stroke="rgba(255,255,255,.16)"/>
-    <text class="label" x="28" y="42">closed-loop stack</text>
-    <path d="M54 82 H166 C204 82 204 139 242 139 H298" class="line" filter="url(#softGlow)"/>
-    <path d="M298 139 H188 C151 139 151 184 110 184 H52" class="line" opacity=".72"/>
-    <circle cx="54" cy="82" r="12" fill="#58d6ff"/>
-    <circle cx="174" cy="82" r="12" fill="#7cf7b4"/>
-    <circle cx="298" cy="139" r="12" fill="#ffd166"/>
-    <circle cx="52" cy="184" r="12" fill="#ff7aa2"/>
-    <text class="mono" x="76" y="88">capture</text>
-    <text class="mono" x="196" y="88">world model</text>
-    <text class="mono" x="112" y="190">recovery replay</text>
-    <text class="mono" x="226" y="164">gamepad</text>
-  </g>
-
-  <g transform="translate(145 318)" filter="url(#softGlow)">
-    <path d="M0 0 H178" stroke="url(#accent)" stroke-width="5" stroke-linecap="round"/>
-    <circle cx="0" cy="0" r="7" fill="#58d6ff"/>
-    <circle cx="178" cy="0" r="7" fill="#ffd166"/>
-  </g>
+  <rect width="1280" height="440" rx="30" fill="url(#sky)"/>
+  <circle cx="145" cy="92" r="98" fill="#16324b" opacity=".65"/><circle cx="1115" cy="112" r="138" fill="#123148" opacity=".55"/>
+  <path d="M0 310 C165 256 305 255 450 304 C580 348 710 350 858 306 C1028 255 1160 258 1280 302 L1280 440 L0 440 Z" fill="#061016"/>
+  <path d="M210 440 C354 358 498 316 638 298 C780 280 928 298 1110 368 C1160 388 1220 414 1280 440 Z" fill="url(#road)"/>
+  <path d="M640 301 C660 334 690 386 720 440" stroke="#facc15" stroke-width="6" stroke-dasharray="20 20" stroke-linecap="round"/><path d="M592 303 C552 342 512 389 472 440" stroke="rgba(255,255,255,.26)" stroke-width="2"/><path d="M665 302 C730 340 780 382 824 440" stroke="rgba(255,255,255,.26)" stroke-width="2"/>
+  <g transform="translate(72 62)"><text class="title" x="0" y="70">Horizon FSD</text><text class="sub" x="4" y="114">Hardened FH6 self-driving research stack</text><g transform="translate(4 154)"><rect class="chip" x="0" y="0" width="152" height="42" rx="21"/><text class="small" x="22" y="27">vision</text><rect class="chip" x="172" y="0" width="174" height="42" rx="21"/><text class="small" x="194" y="27">telemetry</text><rect class="chip" x="366" y="0" width="172" height="42" rx="21"/><text class="small" x="388" y="27">DreamerV3</text><rect class="chip" x="558" y="0" width="204" height="42" rx="21"/><text class="small" x="580" y="27">AutoDrive demos</text></g></g>
+  <g transform="translate(806 70)"><rect x="0" y="0" width="362" height="238" rx="26" fill="rgba(3,10,18,.72)" stroke="rgba(255,255,255,.18)"/><text class="small" x="28" y="42">closed-loop learning</text><path class="wire" d="M58 86 H162 C205 86 199 144 244 144 H306" filter="url(#g)"/><path class="wire" d="M306 144 H206 C155 144 152 194 70 194" opacity=".75"/><circle cx="58" cy="86" r="12" fill="#38bdf8"/><circle cx="170" cy="86" r="12" fill="#22c55e"/><circle cx="306" cy="144" r="12" fill="#facc15"/><circle cx="70" cy="194" r="12" fill="#fb7185"/><text class="mono" x="82" y="92">capture</text><text class="mono" x="192" y="92">world model</text><text class="mono" x="104" y="200">recovery replay</text><text class="mono" x="240" y="170">gamepad</text></g>
 </svg>

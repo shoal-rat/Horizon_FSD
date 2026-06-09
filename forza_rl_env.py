@@ -102,6 +102,9 @@ class ForzaDriveEnv:
         self.high_speed_steer_limit = float(safety.get("high_speed_steer_limit", 0.35))
         self.high_speed_threshold = float(safety.get("high_speed_threshold", 15.0))
         self.grace_s = float(safety.get("recovery_grace_s", 1.5))  # skip detection just after a reset
+        # When automated recovery is exhausted: False (default) = PAUSE and wait for the car to become
+        # drivable (don't kill an overnight run); True = raise and stop.
+        self.crash_on_unrecoverable = bool(safety.get("crash_on_unrecoverable", False))
         self.stale_after = float(tel.get("stale_after_s", 3.0 * self.tick_dt))  # telemetry freshness bound
         self.resume_timeout = float(tel.get("resume_timeout_s", 30.0))
         # WGC only delivers a frame on content change, so a real freeze (load screen / alt-tab) stops
@@ -290,6 +293,32 @@ class ForzaDriveEnv:
             time.sleep(0.1)
         return False
 
+    def _await_manual_recovery(self, reason: str) -> None:
+        """Automated recovery is exhausted (car unroutable - most often NO AutoDrive waypoint is pinned,
+        or the pause-reset bind doesn't work). Rather than KILL an overnight run, neutralize and WAIT:
+        watch for the car to become drivable again (the human repositions it onto a road; the agent then
+        resumes). The background learner keeps training on the replay buffer the whole time. Ctrl+C still
+        stops the run cleanly."""
+        self.gamepad.reset()
+        bar = "=" * 74
+        print(f"\n{bar}\n[forza-env] RECOVERY EXHAUSTED after '{reason}'. Training is PAUSED, not stopped."
+              f"\n  -> Put the car back on a road; PIN A ROUTE WAYPOINT so AutoDrive works next time."
+              f"\n  -> Resumes automatically once the car is driving on a road. Ctrl+C to stop.\n{bar}\a")
+        on_road_rumble = self.resetter.cfg.on_road_rumble
+        last_msg = time.perf_counter()
+        while True:
+            t = self.rx.latest(max_age=self.stale_after)
+            if (t is not None and t.is_driving and self.capture.frame_age() < self.stale_frame_s
+                    and t.mean_surface_rumble < on_road_rumble):
+                print("[forza-env] car is drivable again - resuming training")
+                return
+            now = time.perf_counter()
+            if now - last_msg > 30.0:
+                last_msg = now
+                print(f"[forza-env] still waiting for a drivable car after '{reason}' "
+                      "(reposition it on a road; Ctrl+C to stop)")
+            time.sleep(1.0)
+
     def reset(self):
         if self._pending_reason is not None:       # recover from the event that ended the last episode
             self.gamepad.reset()
@@ -301,11 +330,14 @@ class ForzaDriveEnv:
             else:
                 recovered_by = self.resetter.recover(self._pending_reason)
                 if recovered_by == "FAILED":
-                    raise RuntimeError(
-                        f"Forza recovery failed after {self._pending_reason}; "
-                        "manual reposition is required before training can continue."
-                    )
-                print(f"[forza-env] recovered by {recovered_by}")
+                    if self.crash_on_unrecoverable:
+                        raise RuntimeError(
+                            f"Forza recovery failed after {self._pending_reason}; "
+                            "manual reposition is required before training can continue."
+                        )
+                    self._await_manual_recovery(self._pending_reason)
+                else:
+                    print(f"[forza-env] recovered by {recovered_by}")
             self._pending_reason = None
         self.gamepad.reset()
         self.detector.reset()

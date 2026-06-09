@@ -1,63 +1,56 @@
 # Release Notes
 
-## v0.1.0 - Public Research Preview
+## v0.2.0 - Hardened AutoDrive And Full-Config Preview
 
-This is the first public-ready snapshot of Horizon FSD.
+This release documents and publishes the hardened pipeline after the large
+strategy update.
 
 ### Highlights
 
-- Real-time Forza Horizon driving environment built from screen capture,
-  Data Out telemetry, and virtual Xbox controller input.
-- DreamerV3 integration through a reproducible vendor patch for
-  `NM512/dreamerv3-torch`.
-- Low-VRAM workflow:
-  - close FH6
-  - pretrain from replay with `offline_pretrain_dreamer.py`
-  - reopen FH6 for live collection
-- Centerline-aware reward for route progress.
-- Steering and pedal safety guards for early live RL.
-- Crash, stuck, flipped and off-road detection.
-- Recovery ladder with rewind, ANNA AutoDrive, prompt acceptance, and escalation
-  to teleport-style reset when the car is wedged or flipped.
-- Smooth non-teleport AutoDrive recoveries are saved as Dreamer replay
-  demonstrations.
-- Teleport recoveries keep training alive but are discarded as dynamics data.
-
-### Included
-
-- Project code and tests.
-- Public documentation.
-- SVG diagrams for architecture and recovery flow.
-- DreamerV3 patch file.
-- Configuration templates.
-
-### Excluded
-
-- FH6 recordings.
-- Dreamer replay buffers.
-- Trained checkpoints.
-- Local `centerline.npy`.
-- TensorBoard logs.
-- Python virtual environments.
-- The vendored `dreamerv3_torch/` checkout.
+- Added route-aware terminations: `offroute`, `noprogress`, and `route_complete`.
+- Added strange-situation guards for stale telemetry, paused/menu states, frozen
+  capture frames, teleport jumps, long GPU-stall ticks, and slow-but-advancing
+  motion.
+- Reworked AutoDrive recovery around the observed FH6 behavior:
+  - far off-road can show a Fast Travel Warning / transfer prompt
+  - on-road stuck states usually have no prompt and AutoDrive drives back
+  - confirm `A` is only sent while the car is positionally frozen
+- Added `forza_full` Dreamer config for larger world-model training when GPU
+  headroom is available.
+- Added `train_dreamer.py --config` so `forza` and `forza_full` are selectable.
+- Added stress tests for NaN/inf handling, malformed packets, teleport jumps,
+  route seams, braking-vs-impact, route ends, offroute, noprogress, and stuck
+  edge cases.
+- Updated the public README and SVG diagrams to match the current stack.
 
 ### Validation
-
-The public preview was validated with:
 
 ```text
 python -m unittest discover -s tests -v
 python -m py_compile recovery.py recovery_demo.py forza_rl_env.py train_dreamer.py reset_test.py offline_pretrain_dreamer.py
 ```
 
-At publication time, the test suite contained 26 unit tests.
+At publication time, the suite contains 52 tests.
 
-### Known Limitations
+### Notes
 
-- The project is Windows-only.
-- Live training must be supervised.
-- Capture, route, steering limits and reward weights are hardware/game-state
-  dependent.
-- No license file is included yet.
-- The learned policy is experimental and not expected to generalize broadly from
-  one route without more data and curriculum work.
+- `forza_full` should only be used after reducing FH6 GPU pressure and verifying
+  that VRAM does not spill into shared system memory.
+- A waypoint must be pinned for AutoDrive recovery.
+- Teleport recoveries keep training alive but are not saved as dynamics demos.
+
+## v0.1.0 - Public Research Preview
+
+Initial public-ready snapshot.
+
+### Highlights
+
+- Real-time Forza Horizon driving environment built from screen capture, Data Out
+  telemetry, and virtual Xbox controller input.
+- DreamerV3 integration through a reproducible vendor patch for
+  `NM512/dreamerv3-torch`.
+- Low-VRAM workflow with offline replay pretraining.
+- Centerline-aware reward for route progress.
+- Crash, stuck, flipped and off-road detection.
+- AutoDrive recovery demonstrations for smooth non-teleport recoveries.
+- Public documentation and SVG diagrams.
