@@ -43,6 +43,27 @@ class TestDriveReward(unittest.TestCase):
         r = reward(FakeTelemetry(speed=float("nan")), None, np.array([0.0, 1.0, 0.0], np.float32), None)
         self.assertEqual(r, 0.0)
 
+    def test_centering_rewards_being_near_the_line(self):
+        # the night-safe steering signal: on the line must beat being far off it (same forward progress)
+        @dataclass
+        class PosTel:
+            speed: float
+            position_x: float = 0.0
+            position_z: float = 0.0
+            mean_surface_rumble: float = 0.0
+            mean_tire_slip_ratio: float = 0.0
+            angular_velocity_y: float = 0.0
+        reward = DriveReward(DriveRewardConfig(centerline_path=""))
+        # project returns lat = |position_z| (distance off the line); same ds (forward) either way
+        reward._centerline = type("FC", (), {
+            "project": staticmethod(lambda x, z: (float(x), abs(float(z)), False)), "length": 1000.0})()
+        a = np.array([0.0, 1.0, 0.0], np.float32)
+        centered = reward(PosTel(speed=10.0, position_x=5.0, position_z=0.0),
+                          PosTel(speed=10.0, position_x=0.0, position_z=0.0), a, None)
+        off = reward(PosTel(speed=10.0, position_x=5.0, position_z=15.0),
+                     PosTel(speed=10.0, position_x=0.0, position_z=15.0), a, None)
+        self.assertGreater(centered, off)
+
     def test_reverse_earns_no_speed_bonus(self):
         # W3: with a centerline, going backward (ds<0) must NOT pay the forward-speed bonus
         @dataclass

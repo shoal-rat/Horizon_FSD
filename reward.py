@@ -90,6 +90,11 @@ class DriveRewardConfig:
     route_max_dist: float = 18.0      # m: beyond this lateral = off-route, no progress. KEEP == detector
     #                                   offroute_dist (18): if reward credited progress wider than the
     #                                   detector tolerates, the 18-30 m band was a lane-edge farming strip
+    center_w: float = 0.5         # STEERING SIGNAL: dense penalty for lateral distance from the route
+    #                               line (telemetry-based, so it WORKS AT NIGHT when the visual line cue is
+    #                               dark/off). Without it a cold actor has no signal which way to steer and
+    #                               collapses to a constant hard turn. Kept below progress so driving still
+    #                               dominates standing centred.
     boot_w: float = 0.3           # BOOTSTRAP: small dense forward-speed bonus (on-road) so a fresh
     #                               actor gets a gradient toward driving forward BEFORE it can make
     #                               clean centerline progress (which is otherwise too sparse to learn
@@ -144,26 +149,26 @@ class DriveReward:
                     "fall back to the circle-hackable speed reward. Rebuild it with build_centerline.py "
                     'or set centerline_path="" to use the speed reward deliberately.') from e
 
-    def _progress(self, t, prev_t, on_road: bool) -> tuple[float, Optional[float]]:
-        """Return (progress, ds) where ds = signed arc-length advance along the centerline (or None
-        when no centerline/position, e.g. warm-start demos). Path progress is circle-proof; the
-        fallback is capped speed. ds lets the caller gate the forward-speed bonus on REAL forward
-        motion so reversing can't farm it."""
+    def _progress(self, t, prev_t, on_road: bool) -> tuple[float, Optional[float], Optional[float]]:
+        """Return (progress, ds, lat): progress credit, signed arc-length advance ds (None with no
+        centerline/position, e.g. warm-start demos), and lateral distance lat from the route line (None
+        when unknown). Path progress is circle-proof; the fallback is capped speed. ds gates the
+        forward-speed bonus on real forward motion; lat drives the centering steering signal."""
         c = self.cfg
         if not on_road:
-            return 0.0, None
+            return 0.0, None, None
         if (self._centerline is not None and prev_t is not None
                 and hasattr(t, "position_x") and hasattr(prev_t, "position_x")):
             if not (math.isfinite(t.position_x) and math.isfinite(t.position_z)):
-                return 0.0, 0.0
+                return 0.0, 0.0, None
             s_now, lat = self._centerline.project(t.position_x, t.position_z)[:2]
             s_prev, _ = self._centerline.project(prev_t.position_x, prev_t.position_z)[:2]
             ds = s_now - s_prev
             if lat <= c.route_max_dist and abs(ds) <= c.progress_jump_guard:
-                return (max(0.0, ds) / c.progress_max_step) * c.progress_scale, ds
-            return 0.0, 0.0                              # off-route or teleport/seam -> no credit, no forward
+                return (max(0.0, ds) / c.progress_max_step) * c.progress_scale, ds, lat
+            return 0.0, 0.0, lat                         # off-route/seam: no progress credit, but lat known
         fwd = max(0.0, t.speed)                          # fallback: capped speed (warm-start demos drive fwd)
-        return (min(fwd, c.speed_cap) / c.speed_cap) * c.progress_scale, None
+        return (min(fwd, c.speed_cap) / c.speed_cap) * c.progress_scale, None, None
 
     def __call__(self, t, prev_t=None, action=None, prev_action=None) -> float:
         c = self.cfg
@@ -173,11 +178,15 @@ class DriveReward:
                 and math.isfinite(t.mean_tire_slip_ratio)):
             return 0.0
         on_road = t.mean_surface_rumble < c.offroad_rumble
-        progress, ds = self._progress(t, prev_t, on_road)
+        progress, ds, lat = self._progress(t, prev_t, on_road)
         # the speed bonuses (boot/launch) only pay for REAL forward motion: advancing along the route
         # (ds>0), or - with no centerline - the warm-start demos, which drive forward. This stops a car
         # from farming the speed bonus by REVERSING (ds<0, the circle-proof reward leaking back in).
         fwd_ok = (ds is None) or (ds > 0.0)
+        # lateral-centering: a DENSE, telemetry-based (so it WORKS AT NIGHT) pull toward the route line.
+        # This is the steering gradient a cold actor needs - without it, at night with the visual line
+        # cue dark, the actor gets no signal which way to steer and collapses to a constant hard turn.
+        center = c.center_w * min(1.0, lat / max(1e-6, c.route_max_dist)) if (lat is not None and on_road) else 0.0
         offroad = c.offroad_w * t.mean_surface_rumble
         slip = c.slip_w * max(0.0, t.mean_tire_slip_ratio - c.slip_deadband)
         jerk = 0.0
@@ -205,5 +214,5 @@ class DriveReward:
         boot = c.boot_w * (min(max(0.0, t.speed), c.speed_cap) / c.speed_cap) if (on_road and fwd_ok) else 0.0
         idle = c.idle_w if on_road and max(0.0, t.speed) < c.idle_speed else 0.0
         r = float(progress + boot + launch - offroad - slip - jerk - spin
-                  - steer_pen - brake_pen - idle)
+                  - steer_pen - brake_pen - idle - center)
         return r if math.isfinite(r) else 0.0
