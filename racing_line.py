@@ -48,9 +48,14 @@ class RacingLineConfig:
     min_pixels: int = 40        # fewer line pixels than this => line not present
     near_weight: float = 2.0    # nearer (lower) rows count this much more for the cue
     conf_full_frac: float = 0.02  # ROI fraction of line pixels that maps to confidence 1.0
-    min_scene_brightness: int = 85  # ROI mean grey below this = night/too dark to detect
-    #                                 reliably (moonlit snow goes blue, headlights go yellow)
-    #                                 -> report confidence 0 (fail safe) instead of garbage
+    # Day/night handling. The chevrons stay visible at night (headlight-lit), but the COLD night scene
+    # (moonlit snow/sky) reads as false BLUE, so a naive read flips an amber 'ease' line to 'accelerate'.
+    # Below day_brightness we switch to NIGHT mode: drop blue, trust only the snow-immune WARM cues
+    # (amber=ease, red=brake) at reduced confidence (worst-case error = over-cautious braking, never a
+    # false 'accelerate into a corner'). Steering at night leans on the telemetry centering reward.
+    min_scene_brightness: int = 85  # ROI mean grey >= this = DAY (trust all colours); below = NIGHT mode
+    night_conf_scale: float = 0.5   # scale night-mode confidence down (the warm cue is real but noisier)
+    min_night_brightness: int = 20  # truly too dark even for warm cues -> report confidence 0 (off)
 
 
 @dataclass
@@ -91,10 +96,16 @@ class RacingLineReader:
         c = self.cfg
         H, W = frame_bgr.shape[:2]
         (x0, y0, rw, rh), roi, blue, yellow, red = self._masks(frame_bgr)
-
-        # fail safe in the dark: too dim to tell the line from blue snow / yellow headlights
-        if roi.size == 0 or float(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY).mean()) < c.min_scene_brightness:
+        if roi.size == 0:
             return LineReading(0.0, 0.0, 0.0, (0, 0, 0))
+
+        scene = float(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY).mean())
+        if scene < c.min_night_brightness:          # truly too dark even for warm cues -> off (fail safe)
+            return LineReading(0.0, 0.0, 0.0, (0, 0, 0))
+        conf_scale = 1.0
+        if scene < c.min_scene_brightness:          # NIGHT: the cold scene reads as false blue (moonlit
+            blue = np.zeros_like(blue)              # snow/sky), so trust only the snow-immune WARM cues
+            conf_scale = c.night_conf_scale         # (amber=ease, red=brake) at reduced confidence.
 
         nb, ny, nr = int(blue.sum()), int(yellow.sum()), int(red.sum())
         npix = nb + ny + nr
@@ -117,7 +128,7 @@ class RacingLineReader:
         cx = (float((np.arange(rw) * colmass).sum() / msum) + x0) if msum > 0 else (W / 2.0)
         offset = (cx - W / 2.0) / (W / 2.0)
 
-        conf = npix / (c.conf_full_frac * rw * rh)
+        conf = conf_scale * npix / (c.conf_full_frac * rw * rh)
         return LineReading(float(np.clip(cue, -1, 1)),
                            float(np.clip(offset, -1, 1)),
                            float(np.clip(conf, 0, 1)),
