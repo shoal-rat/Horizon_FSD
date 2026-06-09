@@ -20,6 +20,7 @@ Setup (Windows):
 """
 from __future__ import annotations
 
+import atexit
 import logging
 from typing import Sequence
 
@@ -67,7 +68,17 @@ class ForzaGamepad:
         except Exception as exc:  # ViGEmBus missing / not running
             raise RuntimeError(_DRIVER_HINT) from exc
         self.reset()
+        # SAFETY: ViGEm latches the last input until told otherwise. If the trainer crashes or is
+        # killed mid-action without close()/__exit__, the car would hold e.g. full throttle into a wall
+        # forever. atexit runs on normal exit AND on an unhandled exception, releasing all inputs.
+        atexit.register(self._safe_neutral)
         logger.info("Virtual Xbox 360 gamepad connected.")
+
+    def _safe_neutral(self) -> None:
+        try:
+            self.reset()
+        except Exception:  # pragma: no cover - best-effort on interpreter teardown
+            pass
 
     # ---- main control -----------------------------------------------------
     def apply(self, action: Sequence[float]) -> None:

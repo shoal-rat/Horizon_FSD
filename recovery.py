@@ -72,6 +72,13 @@ class DetectorConfig:
     noprogress_min_advance: float = 3.0  # m of new arc-length that counts as "making progress"
     noprogress_speed: float = 3.0   # only flag noprogress while actually MOVING (a slow/stopped car is
     #                                 the stuck/idle detector's job; this catches circling at speed)
+    nominal_dt: float = 0.05        # expected control tick; the rate/timer tests are calibrated to it
+    dt_skip_factor: float = 3.0     # a tick longer than this*nominal_dt (GPU stall) is a discontinuity:
+    #                                 skip the rate/timer checks rather than fabricate impact/stuck/noprogress
+    teleport_jump_m: float = 30.0   # a one-tick world-position jump bigger than this = fast-travel/respawn/
+    #                                 teleport, not driving -> suppress offroute/impact/noprogress, re-anchor
+    stuck_displacement_m: float = 1.0  # "stuck" also requires near-zero WORLD displacement, so a slow uphill
+    #                                    grind that is still crawling forward isn't mistaken for wedged
 
 
 class CrashDetector:
@@ -90,12 +97,23 @@ class CrashDetector:
             self._centerline = None
         self.reset()
 
+    @staticmethod
+    def _xz(t) -> Optional[tuple]:
+        """Finite (x, z) world position, or None (so all callers fail safe on a garbage/absent frame)."""
+        if hasattr(t, "position_x") and hasattr(t, "position_z"):
+            x, z = float(t.position_x), float(t.position_z)
+            if math.isfinite(x) and math.isfinite(z):
+                return (x, z)
+        return None
+
     def reset(self) -> None:
         self._flip_since: Optional[float] = None
         self._slow_since: Optional[float] = None
+        self._slow_pos: Optional[tuple] = None
         self._offroad_since: Optional[float] = None
         self._prev_speed: Optional[float] = None
         self._prev_t_wall: Optional[float] = None
+        self._prev_pos: Optional[tuple] = None
         self._throttle_last: Optional[float] = None
         self._offroute_since: Optional[float] = None
         self._best_arc: Optional[float] = None
@@ -108,13 +126,29 @@ class CrashDetector:
             return None
         c = self.cfg
 
-        # impact: a sudden speed collapse = collision. The threshold scales with the REAL elapsed
-        # time so a slow/over-running control tick (common on the shared GPU) doesn't read normal
-        # braking over a long gap as a crash (which would teach the agent that braking is fatal).
-        dt = (now - self._prev_t_wall) if self._prev_t_wall is not None else 0.05
+        dt = (now - self._prev_t_wall) if self._prev_t_wall is not None else c.nominal_dt
         self._prev_t_wall = now
-        if self._prev_speed is not None:
-            thresh = -c.impact_speed_drop * min(2.0, max(0.5, dt / 0.05))
+        pos = self._xz(t)
+        overrun = dt > c.dt_skip_factor * c.nominal_dt   # a GPU/learner stall: a much-longer-than-normal tick
+
+        # Teleport guard: a one-tick world-position JUMP (fast-travel / respawn / AutoDrive transfer /
+        # load screen) is not driving - every position-based test is meaningless this tick, so re-anchor
+        # and skip so we never fabricate impact/offroute/noprogress from the discontinuity.
+        teleport = (pos is not None and self._prev_pos is not None
+                    and math.dist(pos, self._prev_pos) > c.teleport_jump_m)
+        self._prev_pos = pos
+        if teleport:
+            self._prev_speed = t.speed
+            self._slow_since = self._slow_pos = self._throttle_last = None
+            self._offroute_since = self._arc_since = self._flip_since = self._offroad_since = None
+            self._best_arc = None              # arc is discontinuous after a teleport -> re-anchor
+            return None
+
+        # impact: a sudden speed collapse = collision. SKIP on an over-running tick (a stall's long dt
+        # would read normal braking over the gap as a crash, teaching the agent that braking is fatal);
+        # otherwise scale the threshold by the real dt.
+        if self._prev_speed is not None and not overrun:
+            thresh = -c.impact_speed_drop * min(2.0, max(0.5, dt / c.nominal_dt))
             if (t.speed - self._prev_speed) < thresh:
                 self._prev_speed = t.speed
                 return "impact"
@@ -135,6 +169,7 @@ class CrashDetector:
         if t.speed < c.stuck_speed:
             if self._slow_since is None:
                 self._slow_since = now
+                self._slow_pos = pos
             # remember WHEN throttle was last applied (not just that it ever was): a single stale tap
             # shouldn't latch "stuck" forever once the agent legitimately brakes/holds.
             if throttle_cmd > c.stuck_throttle_min and brake_cmd < c.stuck_brake_max:
@@ -142,15 +177,20 @@ class CrashDetector:
             elapsed = now - self._slow_since
             trying = (self._throttle_last is not None
                       and now - self._throttle_last <= c.stuck_throttle_grace)
+            # ...and the car is genuinely NOT moving through the world: a slow uphill crawl that still
+            # covers ground isn't "stuck". Falls back to speed-only when position is unavailable.
+            not_moving = (pos is None or self._slow_pos is None
+                          or math.dist(pos, self._slow_pos) < c.stuck_displacement_m)
             hard_stuck = (
                 c.stuck_hard_seconds > 0.0
                 and t.mean_surface_rumble > c.offroad_rumble
                 and elapsed > c.stuck_hard_seconds
             )
-            if (trying and elapsed > c.stuck_seconds) or hard_stuck:
+            if (trying and not_moving and elapsed > c.stuck_seconds) or hard_stuck:
                 return "stuck"
         else:
             self._slow_since = None
+            self._slow_pos = None
             self._throttle_last = None
 
         # off-road: on a rough surface (grass/snow), AT ANY SPEED, for a short window. The old

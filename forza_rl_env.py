@@ -104,6 +104,10 @@ class ForzaDriveEnv:
         self.grace_s = float(safety.get("recovery_grace_s", 1.5))  # skip detection just after a reset
         self.stale_after = float(tel.get("stale_after_s", 3.0 * self.tick_dt))  # telemetry freshness bound
         self.resume_timeout = float(tel.get("resume_timeout_s", 30.0))
+        # WGC only delivers a frame on content change, so a real freeze (load screen / alt-tab) stops
+        # frames while a static-but-HUD scene still updates within ~1s; keep this generous so we end the
+        # episode only on a genuine freeze, never on a quiet driving frame. (Tune live if it false-fires.)
+        self.stale_frame_s = float(cfg.get("capture", {}).get("max_frame_age_s", 1.5))
 
         self._prev_t = None
         self._prev_applied_action = np.zeros(3, dtype=np.float32)
@@ -179,7 +183,37 @@ class ForzaDriveEnv:
         return float(np.clip(steer, -limit, limit))
 
     # ---- gym API ----------------------------------------------------------
+    # detector reasons that are just the post-recovery dead-stop settling (suppressed during grace);
+    # flipped/offroad/impact stay ACTIVE - a freshly recovered car that's flipped/off-road means
+    # recovery FAILED and should re-trigger, not be masked.
+    _GRACE_SUPPRESSED = ("stuck", "noprogress", "offroute")
+
+    def _benign_terminal(self, reason):
+        """End the episode WITHOUT a crash penalty and without driving the agent's action - for the
+        not-a-crash halts (paused menu, frozen render frame). reset() waits for live driving to
+        resume for these reasons rather than running the teleport ladder."""
+        self.gamepad.reset()
+        self._pending_reason = reason
+        self._prev_t = None
+        self.detector._prev_speed = None
+        image, line = self._capture()
+        self._prev_line = line
+        obs = self._obs(self.rx.latest(), image, line, is_first=False, is_terminal=True)
+        print(f"[forza-env] episode halted (benign): {reason}")
+        return obs, 0.0, True, {"crash_reason": reason, "speed_kmh": float(obs["speed"][0] * 3.6),
+                                "applied_steer": 0.0, "applied_throttle": 0.0, "applied_brake": 0.0}
+
     def step(self, action):
+        # Not-a-crash halts, checked BEFORE applying the agent's action:
+        t0 = self.rx.latest(max_age=self.stale_after)
+        if t0 is not None and not t0.is_driving:
+            # paused / menu / loading with telemetry still flowing: never drive the agent's action into
+            # a menu (A=confirm would accept events/teleports). Neutralize and wait for racing to resume.
+            return self._benign_terminal("paused")
+        if self.capture.frame_age() > self.stale_frame_s:
+            # WGC stopped delivering frames (real freeze) -> don't learn dynamics from a frozen image.
+            return self._benign_terminal("frame_lost")
+
         model_action = np.asarray(action, dtype=np.float32)
         applied_action = model_to_physical_action(model_action)
         steer = self._limit_steer(float(applied_action[0]))
@@ -204,9 +238,11 @@ class ForzaDriveEnv:
             if t is not None:
                 got_telemetry = True
                 reward += self.reward_fn(t, self._prev_t, applied_action, self._prev_applied_action)
-                if reason is None and not in_grace:
-                    reason = self.detector.update(t, time.perf_counter(),
-                                                  throttle_cmd=throttle, brake_cmd=brake)
+                if reason is None:
+                    r = self.detector.update(t, time.perf_counter(),
+                                             throttle_cmd=throttle, brake_cmd=brake)
+                    if r is not None and not (in_grace and r in self._GRACE_SUPPRESSED):
+                        reason = r          # keep flipped/offroad/impact even in grace; drop settling ones
                 self._prev_t = t
         self._prev_applied_action = applied_action
         if not got_telemetry:                          # frozen stream -> phantom data, not a crash to teleport from
@@ -243,14 +279,25 @@ class ForzaDriveEnv:
         }
         return obs, float(reward), done, info
 
+    def _wait_until_driving(self, timeout: float) -> bool:
+        """Wait until the game is actually RACING again with fresh telemetry and a fresh frame - for the
+        benign halts (telemetry_lost / paused / frame_lost) where the fix is to wait, not to teleport."""
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < timeout:
+            t = self.rx.latest(max_age=self.stale_after)
+            if t is not None and t.is_driving and self.capture.frame_age() < self.stale_frame_s:
+                return True
+            time.sleep(0.1)
+        return False
+
     def reset(self):
         if self._pending_reason is not None:       # recover from the event that ended the last episode
             self.gamepad.reset()
-            if self._pending_reason == "telemetry_lost":
-                # a stream hitch, not a stuck car: wait for telemetry to come back, don't teleport.
-                if not self.rx.wait_for_packet(self.resume_timeout):
-                    raise RuntimeError("Forza telemetry did not resume - is Data Out ON ('Car Dash') "
-                                       "and the game running/focused?")
+            if self._pending_reason in ("telemetry_lost", "paused", "frame_lost"):
+                # stream/menu/render hitch, not a stuck car: wait for live driving to resume, don't teleport.
+                if not self._wait_until_driving(self.resume_timeout):
+                    raise RuntimeError(f"Forza did not resume live driving after '{self._pending_reason}' "
+                                       "- is Data Out ON ('Car Dash'), the game focused, and unpaused?")
             else:
                 recovered_by = self.resetter.recover(self._pending_reason)
                 if recovered_by == "FAILED":

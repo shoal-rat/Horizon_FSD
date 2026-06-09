@@ -87,7 +87,9 @@ class DriveRewardConfig:
     centerline_path: str = r"C:\Horizon_FSD\centerline.npy"
     progress_max_step: float = 2.0    # m of arc-length per ~tick at speed_cap (40*0.05) -> normalises to ~[0,1]
     progress_jump_guard: float = 5.0  # ignore per-call arc-length deltas bigger than this (teleport/seam)
-    route_max_dist: float = 30.0      # m: beyond this lateral distance from the path = off-route, no progress
+    route_max_dist: float = 18.0      # m: beyond this lateral = off-route, no progress. KEEP == detector
+    #                                   offroute_dist (18): if reward credited progress wider than the
+    #                                   detector tolerates, the 18-30 m band was a lane-edge farming strip
     boot_w: float = 0.3           # BOOTSTRAP: small dense forward-speed bonus (on-road) so a fresh
     #                               actor gets a gradient toward driving forward BEFORE it can make
     #                               clean centerline progress (which is otherwise too sparse to learn

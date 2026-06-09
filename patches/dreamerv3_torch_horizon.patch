@@ -1,5 +1,5 @@
 diff --git a/configs.yaml b/configs.yaml
-index 8d8d7ae..e2e11da 100644
+index 8d8d7ae..56ae67a 100644
 --- a/configs.yaml
 +++ b/configs.yaml
 @@ -18,6 +18,7 @@ defaults:
@@ -10,7 +10,7 @@ index 8d8d7ae..e2e11da 100644
  
    # Environment
    task: 'dmc_walker_walk'
-@@ -182,3 +183,32 @@ debug:
+@@ -182,3 +183,66 @@ debug:
    prefill: 1
    batch_size: 10
    batch_length: 20
@@ -43,8 +43,42 @@ index 8d8d7ae..e2e11da 100644
 +  units: 256
 +  encoder: {mlp_keys: 'speed|line', cnn_keys: 'image', cnn_depth: 16}
 +  decoder: {mlp_keys: 'speed|line', cnn_keys: 'image', cnn_depth: 16}
++
++forza_full:
++  # BIGGER model + much more training-per-frame, for when the GPU has headroom (cap FH6 to 1080p
++  # Low/60fps and move the desktop/capture to the iGPU first - see docs/performance.md). Validate
++  # nvidia-smi memory.used stays < ~6.5GB with NO shared-RAM spill before an overnight run; grow
++  # ONE axis at a time: train_ratio -> dyn_stoch -> units/dyn_hidden -> batch_size -> batch_length
++  # -> dyn_deter -> cnn_depth. Run with:  train_dreamer.py --configs forza_full
++  task: forza_drive
++  steps: 1e6
++  envs: 1
++  parallel: False
++  precision: 16
++  pretrain: 200
++  action_repeat: 2          # keep 10Hz CONTROL - more capture FPS does NOT help a 10Hz loop
++  time_limit: 1200
++  grayscale: True
++  prefill: 2500
++  train_ratio: 64           # was 4 -> the PRIMARY accuracy/"more frames used" lever (try 128 if the
++  #                           async learner sustains it: learner_steps/env_step must keep up)
++  compile: False
++  video_pred_log: False
++  eval_episode_num: 0
++  eval_every: 12000
++  log_every: 200
++  async_train: True
++  # --- grown model (~size12m widths; 64x64 obs so cnn_depth 32 is safe) ---
++  batch_size: 16            # was 4: lower-variance gradients (4x activations)
++  batch_length: 48          # was 32: more temporal context per sample (->64 if headroom)
++  dyn_hidden: 256
++  dyn_deter: 1024           # was 256: main world-model upgrade
++  dyn_stoch: 32             # was 24: full categorical latent (nearly free)
++  units: 256
++  encoder: {mlp_keys: 'speed|line', cnn_keys: 'image', cnn_depth: 32}
++  decoder: {mlp_keys: 'speed|line', cnn_keys: 'image', cnn_depth: 32}
 diff --git a/dreamer.py b/dreamer.py
-index f4de475..e8fb986 100644
+index f4de475..e508e96 100644
 --- a/dreamer.py
 +++ b/dreamer.py
 @@ -3,6 +3,8 @@ import functools
@@ -56,7 +90,18 @@ index f4de475..e8fb986 100644
  
  os.environ["MUJOCO_GL"] = "osmesa"
  
-@@ -37,6 +39,10 @@ class Dreamer(nn.Module):
+@@ -21,6 +23,10 @@ import torch
+ from torch import nn
+ from torch import distributions as torchd
+ 
++# Horizon FSD: the obs is a fixed 64x64 image, so let cuDNN autotune the best conv kernel once
++# (free throughput on the lean/full configs; harmless for fixed input sizes).
++torch.backends.cudnn.benchmark = True
++
+ 
+ to_np = lambda x: x.detach().cpu().numpy()
+ 
+@@ -37,6 +43,10 @@ class Dreamer(nn.Module):
          self._should_reset = tools.Every(config.reset_every)
          self._should_expl = tools.Until(int(config.expl_until / config.action_repeat))
          self._metrics = {}
@@ -67,7 +112,7 @@ index f4de475..e8fb986 100644
          # this is update step
          self._step = logger.step // config.action_repeat
          self._update_count = 0
-@@ -58,19 +64,31 @@ class Dreamer(nn.Module):
+@@ -58,19 +68,31 @@ class Dreamer(nn.Module):
      def __call__(self, obs, reset, state=None, training=True):
          step = self._step
          if training:
@@ -110,7 +155,7 @@ index f4de475..e8fb986 100644
                  if self._config.video_pred_log:
                      openl = self._wm.video_pred(next(self._dataset))
                      self._logger.video("train_openl", to_np(openl))
-@@ -126,11 +144,62 @@ class Dreamer(nn.Module):
+@@ -126,11 +148,62 @@ class Dreamer(nn.Module):
          if self._config.expl_behavior != "greedy":
              mets = self._expl_behavior.train(start, context, data)[-1]
              metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -178,7 +223,7 @@ index f4de475..e8fb986 100644
  
  
  def count_steps(folder):
-@@ -193,6 +262,11 @@ def make_env(config, mode, id):
+@@ -193,6 +266,11 @@ def make_env(config, mode, id):
  
          env = minecraft.make_env(task, size=config.size, break_speed=config.break_speed)
          env = wrappers.OneHotAction(env)
@@ -190,7 +235,7 @@ index f4de475..e8fb986 100644
      else:
          raise NotImplementedError(suite)
      env = wrappers.TimeLimit(env, config.time_limit)
-@@ -294,9 +368,35 @@ def main(config):
+@@ -294,9 +372,35 @@ def main(config):
      agent.requires_grad_(requires_grad=False)
      if (logdir / "latest.pt").exists():
          checkpoint = torch.load(logdir / "latest.pt")
@@ -229,7 +274,7 @@ index f4de475..e8fb986 100644
  
      # make sure eval will be executed once after config.steps
      while agent._step < config.steps + config.eval_every:
-@@ -327,11 +427,11 @@ def main(config):
+@@ -327,11 +431,11 @@ def main(config):
              steps=config.eval_every,
              state=state,
          )
@@ -246,7 +291,7 @@ index f4de475..e8fb986 100644
      for env in train_envs + eval_envs:
          try:
              env.close()
-@@ -343,7 +443,7 @@ if __name__ == "__main__":
+@@ -343,7 +447,7 @@ if __name__ == "__main__":
      parser = argparse.ArgumentParser()
      parser.add_argument("--configs", nargs="+")
      args, remaining = parser.parse_known_args()
