@@ -32,6 +32,7 @@ Requires FH6 damage = None/Cosmetic so rewind isn't greyed out.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -52,21 +53,41 @@ class DetectorConfig:
     stuck_hard_seconds: float = 30.0 # off-road frozen this long -> stuck (safety net)
     stuck_throttle_min: float = 0.2 # "accelerator applied"
     stuck_brake_max: float = 0.2    # ... and not braking/reversing
-    impact_speed_drop: float = 4.0  # m/s lost in one ~0.05s tick = collision (detect instantly)
+    stuck_throttle_grace: float = 0.5  # only "stuck" if throttle was applied within this long (else the
+    #                                    agent deliberately stopped; a single stale tap shouldn't latch it)
+    impact_speed_drop: float = 4.0  # m/s lost per ~0.05s tick = collision; scaled by real dt (loop overrun)
     flip_roll: float = 1.2          # rad (~69 deg)
     flip_pitch: float = 0.9         # rad (~52 deg)
     flip_seconds: float = 0.5
-    offroad_rumble: float = 0.15    # mean surface rumble
-    offroad_speed: float = 10.0     # only "off-road wallowing" if also slow
-    offroad_seconds: float = 2.0
+    offroad_rumble: float = 0.15    # mean surface rumble above this = off the paved road
+    offroad_seconds: float = 1.0    # ... sustained this long = off-road (was 2.0 AND gated on speed<10,
+    #                                 so a car driving FAST off-road was never caught - that gate is gone)
+    # --- route-aware termination (needs centerline.npy): end the episode the MOMENT the car leaves the
+    #     training route. This gives a prompt "off-route = bad" signal AND keeps the car NEAR the route so
+    #     AutoDrive recovers it with a short drive back instead of teleporting to a far road. ---
+    centerline_path: str = r"C:\Horizon_FSD\centerline.npy"
+    offroute_dist: float = 18.0     # m of lateral distance from the route centreline = off the route
+    offroute_seconds: float = 0.8
+    noprogress_seconds: float = 5.0 # on-route + MOVING but no centreline advance this long = circling/wrong-way
+    noprogress_min_advance: float = 3.0  # m of new arc-length that counts as "making progress"
+    noprogress_speed: float = 3.0   # only flag noprogress while actually MOVING (a slow/stopped car is
+    #                                 the stuck/idle detector's job; this catches circling at speed)
 
 
 class CrashDetector:
     """Feed telemetry over time; update() returns a reason
-    ('impact'/'stuck'/'flipped'/'offroad') or None. Reasons are debounced."""
+    ('impact'/'stuck'/'flipped'/'offroad'/'offroute'/'noprogress') or None. Reasons are debounced."""
 
     def __init__(self, cfg: DetectorConfig = DetectorConfig()) -> None:
         self.cfg = cfg
+        self._centerline = None
+        try:                                            # route-aware checks need the same centerline
+            if cfg.centerline_path and os.path.exists(cfg.centerline_path):
+                from centerline import Centerline
+                self._centerline = Centerline.load(cfg.centerline_path)
+        except Exception:
+            logger.exception("detector: failed to load centerline")
+            self._centerline = None
         self.reset()
 
     def reset(self) -> None:
@@ -74,7 +95,11 @@ class CrashDetector:
         self._slow_since: Optional[float] = None
         self._offroad_since: Optional[float] = None
         self._prev_speed: Optional[float] = None
-        self._throttle_seen = False
+        self._prev_t_wall: Optional[float] = None
+        self._throttle_last: Optional[float] = None
+        self._offroute_since: Optional[float] = None
+        self._best_arc: Optional[float] = None
+        self._arc_since: Optional[float] = None
 
     def update(self, t: ForzaTelemetry, now: float,
                throttle_cmd: float = 1.0, brake_cmd: float = 0.0) -> Optional[str]:
@@ -83,15 +108,21 @@ class CrashDetector:
             return None
         c = self.cfg
 
-        # impact: a sudden speed collapse in one tick = collision -> detect INSTANTLY,
-        # so rewind catches the pre-crash state within its short window.
-        if self._prev_speed is not None and (t.speed - self._prev_speed) < -c.impact_speed_drop:
-            self._prev_speed = t.speed
-            return "impact"
+        # impact: a sudden speed collapse = collision. The threshold scales with the REAL elapsed
+        # time so a slow/over-running control tick (common on the shared GPU) doesn't read normal
+        # braking over a long gap as a crash (which would teach the agent that braking is fatal).
+        dt = (now - self._prev_t_wall) if self._prev_t_wall is not None else 0.05
+        self._prev_t_wall = now
+        if self._prev_speed is not None:
+            thresh = -c.impact_speed_drop * min(2.0, max(0.5, dt / 0.05))
+            if (t.speed - self._prev_speed) < thresh:
+                self._prev_speed = t.speed
+                return "impact"
         self._prev_speed = t.speed
 
         if abs(t.roll) > c.flip_roll or abs(t.pitch) > c.flip_pitch:
-            self._flip_since = self._flip_since or now
+            if self._flip_since is None:
+                self._flip_since = now
             if now - self._flip_since > c.flip_seconds:
                 return "flipped"
         else:
@@ -104,29 +135,55 @@ class CrashDetector:
         if t.speed < c.stuck_speed:
             if self._slow_since is None:
                 self._slow_since = now
-                self._throttle_seen = False
-            # "accelerator pressed AND not braking/reversing" -> the agent is trying to
-            # go forward but can't. A momentary dip doesn't reset it (the latch stays).
+            # remember WHEN throttle was last applied (not just that it ever was): a single stale tap
+            # shouldn't latch "stuck" forever once the agent legitimately brakes/holds.
             if throttle_cmd > c.stuck_throttle_min and brake_cmd < c.stuck_brake_max:
-                self._throttle_seen = True
+                self._throttle_last = now
             elapsed = now - self._slow_since
+            trying = (self._throttle_last is not None
+                      and now - self._throttle_last <= c.stuck_throttle_grace)
             hard_stuck = (
                 c.stuck_hard_seconds > 0.0
                 and t.mean_surface_rumble > c.offroad_rumble
                 and elapsed > c.stuck_hard_seconds
             )
-            if (self._throttle_seen and elapsed > c.stuck_seconds) or hard_stuck:
+            if (trying and elapsed > c.stuck_seconds) or hard_stuck:
                 return "stuck"
         else:
             self._slow_since = None
-            self._throttle_seen = False
+            self._throttle_last = None
 
-        if t.mean_surface_rumble > c.offroad_rumble and t.speed < c.offroad_speed:
-            self._offroad_since = self._offroad_since or now
+        # off-road: on a rough surface (grass/snow), AT ANY SPEED, for a short window. The old
+        # speed<10 gate let the agent drive fast off-road forever without ever being caught.
+        if t.mean_surface_rumble > c.offroad_rumble:
+            if self._offroad_since is None:
+                self._offroad_since = now
             if now - self._offroad_since > c.offroad_seconds:
                 return "offroad"
         else:
             self._offroad_since = None
+
+        # route-aware termination (only when a centerline + live position are available)
+        if self._centerline is not None and hasattr(t, "position_x") and hasattr(t, "position_z"):
+            s, lat, at_end = self._centerline.project(t.position_x, t.position_z)
+            if lat > c.offroute_dist:
+                # left the route -> end NOW, while still near it (AutoDrive recovers with a short drive)
+                if self._offroute_since is None:
+                    self._offroute_since = now
+                if now - self._offroute_since > c.offroute_seconds:
+                    return "offroute"
+            else:
+                self._offroute_since = None
+                # advance the best-arc marker (NOTE: `is None` check, not `or` - arc 0.0 is falsy and
+                # the `or` form re-read s, firing noprogress every episode that starts at the origin)
+                if self._best_arc is None or s > self._best_arc + c.noprogress_min_advance:
+                    self._best_arc = s if self._best_arc is None else max(self._best_arc, s)
+                    self._arc_since = now
+                elif (now - self._arc_since > c.noprogress_seconds
+                      and t.speed >= c.noprogress_speed):     # moving but not advancing = circling/wrong-way
+                    if at_end or (self._centerline.length - s) <= max(c.noprogress_min_advance, 5.0):
+                        return "route_complete"               # reached the end of an open route - benign
+                    return "noprogress"
 
         return None
 
@@ -149,10 +206,6 @@ class ResetConfig:
     press_gap_s: float = 0.5          # gap between AutoDrive menu presses (was 0.35: too fast, missed presses)
     tap_hold_s: float = 0.10          # hold the D-pad menu taps a touch longer than the 0.08 default
     confirm_hold_s: float = 0.15      # hold A longer so the AutoDrive confirm isn't dropped
-    confirm_attempts: int = 3         # re-press A up to this many times if AutoDrive didn't engage
-    confirm_check_s: float = 2.0      # after A, watch this long for the car to start driving itself
-    autodrive_engaged_speed: float = 2.0  # m/s: car moving on its own (we hold neutral) = AutoDrive took over
-    autodrive_min_displacement: float = 12.0 # legacy metric; route verification is authoritative
     autodrive_prompt_retry_s: float = 1.0 # gap between A taps while the teleport prompt is up
     autodrive_prompt_attempts: int = 2    # the teleport prompt needs ONE A; cap low (was 12: it spammed
     #                                       A into a live AutoDrive drive every time speed dipped, cancelling it)
@@ -160,6 +213,9 @@ class ResetConfig:
     #                                        prompt holds it still; the on-road drive branch starts moving)
     autodrive_prompt_window_s: float = 3.0 # ... and only within this window after opening AutoDrive
     autodrive_reissue_s: float = 10.0 # no progress this long -> re-open ANNA AutoDrive
+    autodrive_engage_deadline_s: float = 8.0  # if AutoDrive never moves the car by now (no waypoint /
+    #                                           unroutable), bail to the pause-reset instead of waiting out
+    #                                           the full timeout every crash
     autodrive_progress_min_m: float = 2.0
     autodrive_on_route_settle_s: float = 0.7
     autodrive_persistent: bool = True # keep training alive by waiting/retrying AutoDrive
@@ -180,23 +236,25 @@ class ResetConfig:
     centerline_path: str = r"C:\Horizon_FSD\centerline.npy"
     route_max_dist: float = 22.0      # m: recovered state must be near our training route if centerline exists
     require_route_if_available: bool = True
-    escalate_window_s: float = 8.0    # a new crash within this of a reset = a "repeat"
-    max_consecutive_rewinds: int = 2  # after this many quick repeats, fall to AutoDrive reset
     # The pause RESET CAR POSITION is the last rung of every ladder (not a queue-jumping
     # escalation), so a wedged/flipped car AutoDrive can't route reaches it each round.
     persistent_max_backoff_s: float = 15.0  # cap the persistent-retry backoff
+    persistent_max_seconds: float = 300.0   # even when persistent, give up after this so a truly unroutable
+    #                                         car returns FAILED (the env can then stop / hand off) - never an
+    #                                         infinite silent hang with the learner training on zero transitions
     heartbeat_every: int = 5          # log a warning every N failed rounds (visibility, not a silent hang)
 
 
 class ForzaResetter:
     def __init__(self, gamepad, telemetry, cfg: ResetConfig = ResetConfig(),
-                 demo_recorder=None) -> None:
+                 demo_recorder=None, detector_cfg: Optional[DetectorConfig] = None) -> None:
         self.pad = gamepad
         self.rx = telemetry
         self.cfg = cfg
+        # Use the SAME flip thresholds the detector terminates on, so a tuned flip_roll/flip_pitch
+        # in config.yaml is honored by recovery acceptance too (no config drift).
+        self.det_cfg = detector_cfg or DetectorConfig()
         self.demo_recorder = demo_recorder
-        self._last_recovery_time = 0.0
-        self._consecutive_rewinds = 0
         self._centerline = None
         try:
             if cfg.centerline_path and os.path.exists(cfg.centerline_path):
@@ -212,15 +270,14 @@ class ForzaResetter:
             return None
         if not hasattr(t, "position_x") or not hasattr(t, "position_z"):
             return None
-        _, lat = self._centerline.project(t.position_x, t.position_z)
-        return lat
+        return self._centerline.project(t.position_x, t.position_z)[1]
 
     def _is_recovered(self, t: Optional[ForzaTelemetry],
                       require_speed: Optional[float] = None,
                       require_route: bool = True) -> bool:
         if t is None or not t.is_driving:
             return False
-        if abs(t.roll) > DetectorConfig.flip_roll or abs(t.pitch) > DetectorConfig.flip_pitch:
+        if abs(t.roll) > self.det_cfg.flip_roll or abs(t.pitch) > self.det_cfg.flip_pitch:
             return False
         if require_speed is not None and t.speed < require_speed:
             return False
@@ -327,14 +384,20 @@ class ForzaResetter:
                 last_a = now
                 prompt_presses += 1
 
-            # AutoDrive never engaged (no waypoint / unreachable) -> re-open ANNA once, then let the
-            # timeout fall through so recover() drops to the pause-reset fallback.
+            # AutoDrive never engaged (no waypoint / unreachable) -> re-open ANNA once...
             if (not driving and not teleported
                     and now - last_progress >= c.autodrive_reissue_s
                     and now - last_reissue >= c.autodrive_reissue_s):
                 self._open_autodrive()
                 last_reissue = now
                 last_progress = now
+
+            # ...and if it STILL hasn't moved the car by the engage deadline, bail early to the
+            # pause-reset fallback rather than burning the whole timeout on every crash.
+            if not driving and not teleported and elapsed > c.autodrive_engage_deadline_s:
+                logger.warning("AutoDrive did not engage in %.0fs (no displacement) - is a route "
+                               "waypoint pinned? falling through to the pause-reset fallback", elapsed)
+                return False, teleported
 
             time.sleep(0.05)
         return False, teleported
@@ -418,55 +481,46 @@ class ForzaResetter:
     def recover(self, reason: str, max_attempts: int = 3) -> str:
         """Run the reset ladder. Returns the method that worked, else 'FAILED'.
 
-        AutoDrive is the PRIMARY recovery - it internally teleports (far) or drives back (on-road
-        stuck), so there is no separate teleport rung above it. The pause-menu RESET CAR POSITION
-        is the LAST rung of every ladder (a genuine fallback for states AutoDrive can't route, NOT
-        a queue-jumping escalation). Rewind leads for a FRESH on-road impact / just-happened flip.
-        With autodrive_persistent=True (unattended training) this never returns FAILED and never
-        hangs silently: each round re-runs the full ladder (ending in the pause reset) with capped
-        backoff and a periodic heartbeat log.
+        AutoDrive is the primary "get back to the route" tool - it internally teleports (far off-road,
+        via its transfer prompt) or drives back (on-road stuck), and its transfer branch also rights a
+        flipped car. If AutoDrive instead leaves the car upright on a DIFFERENT real road (off-route
+        but perfectly drivable), we accept that rather than pause-and-teleport it. The pause-menu RESET
+        CAR POSITION is the last-resort rung. With autodrive_persistent=True this keeps retrying with
+        backoff + a heartbeat, but it gives up after persistent_max_seconds and returns 'FAILED' so a
+        truly unroutable car stops the run / triggers a handoff instead of hanging the learner forever.
         """
         c = self.cfg
-        rewind = ("rewind", self.rewind)
-        autodrive = ("autodrive", self.autodrive_reset)
-        pause_reset = [("reset_position", self.reset_position), ("reset_to_road", self.reset_to_road)]
-
-        # AutoDrive's transfer branch rights a far-off-road car, so flipped also tries it; rewind
-        # leads for the recent-flip / fresh-impact cases. Pause reset is always the final fallback.
-        if reason in ("impact", "stuck", "flipped"):
-            ladder = [rewind, autodrive] + pause_reset
-        else:                                       # offroad / unknown
-            ladder = [autodrive] + pause_reset
-
-        # Don't rewind-loop into the same wall: after max_consecutive_rewinds quick repeats, drop
-        # rewind and go straight to AutoDrive.
-        now0 = time.perf_counter()
-        if reason in ("impact", "stuck", "flipped") and now0 - self._last_recovery_time < c.escalate_window_s:
-            self._consecutive_rewinds += 1
-        else:
-            self._consecutive_rewinds = 0
-        if self._consecutive_rewinds > c.max_consecutive_rewinds:
-            ladder = [m for m in ladder if m[0] != "rewind"]
-
         start = time.perf_counter()
         attempt = 0
         while True:
             attempt += 1
-            for name, fn in ladder:
+            try:
+                if self.autodrive_reset():
+                    return "autodrive"
+            except Exception:  # pragma: no cover
+                logger.exception("autodrive recovery error")
+            # AutoDrive may have routed the car onto a real parallel road just past route_max_dist:
+            # upright, on tarmac, moving - don't pause-and-teleport a perfectly drivable car. Cancel
+            # the lingering AutoDrive (brake) and hand back.
+            if self._is_recovered(self.rx.latest(), require_route=False):
+                self.pad.apply([0.0, 0.0, 0.4])
+                time.sleep(c.autodrive_break_s)
+                self.pad.reset()
+                return "autodrive_offroute_ok"
+            for name, fn in (("reset_position", self.reset_position), ("reset_to_road", self.reset_to_road)):
                 try:
                     if fn():
-                        self._last_recovery_time = time.perf_counter()
                         return name
                 except Exception:  # pragma: no cover
                     logger.exception("%s recovery error", name)
 
-            if not c.autodrive_persistent and attempt >= max_attempts:
-                logger.error("recovery FAILED after %d attempts (reason=%s)", attempt, reason)
+            elapsed = time.perf_counter() - start
+            if (not c.autodrive_persistent and attempt >= max_attempts) or elapsed > c.persistent_max_seconds:
+                logger.error("recovery FAILED (reason=%s, attempts=%d, elapsed=%.0fs) - car unroutable",
+                             reason, attempt, elapsed)
                 return "FAILED"
             if attempt % max(1, c.heartbeat_every) == 0:
-                logger.warning(
-                    "recovery still failing: reason=%s attempts=%d elapsed=%.0fs - car may be "
-                    "unroutable; retrying ladder (incl. pause reset) with backoff", reason, attempt,
-                    time.perf_counter() - start)
+                logger.warning("recovery still failing: reason=%s attempts=%d elapsed=%.0fs - retrying "
+                               "with backoff", reason, attempt, elapsed)
             time.sleep(min(c.autodrive_persistent_retry_s * (1 + attempt // max(1, c.heartbeat_every)),
                            c.persistent_max_backoff_s))

@@ -75,6 +75,9 @@ class RacingLineReader:
         x0, x1 = int(c.roi_x[0] * W), int(c.roi_x[1] * W)
         y0, y1 = int(c.roi_y[0] * H), int(c.roi_y[1] * H)
         roi = frame_bgr[y0:y1, x0:x1]
+        if roi.shape[0] == 0 or roi.shape[1] == 0:      # degenerate ROI (tiny/transient frame): bail
+            empty = np.zeros((0, 0), dtype=bool)        # read()'s roi.size==0 guard then returns neutral
+            return (x0, y0, 0, 0), roi, empty, empty, empty
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
         vivid = (s >= c.sat_min) & (v >= c.val_min)
@@ -106,9 +109,12 @@ class RacingLineReader:
         tot = wb + wy + wr
         cue = (wb - wr) / tot if tot > 0 else 0.0      # +1 blue .. 0 yellow .. -1 red
 
+        # offset = PIXEL-MASS centroid (near-row weighted, same as the cue), not mere column-presence:
+        # otherwise one stray vivid HUD/glint column counts as much as the whole chevron stack.
         mask = blue | yellow | red
-        xs = np.nonzero(mask.any(axis=0))[0]
-        cx = (xs.mean() + x0) if xs.size else (W / 2.0)
+        colmass = (mask * roww).sum(axis=0)
+        msum = float(colmass.sum())
+        cx = (float((np.arange(rw) * colmass).sum() / msum) + x0) if msum > 0 else (W / 2.0)
         offset = (cx - W / 2.0) / (W / 2.0)
 
         conf = npix / (c.conf_full_frac * rw * rh)

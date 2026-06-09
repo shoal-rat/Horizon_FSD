@@ -66,6 +66,7 @@ class ScreenCapture:
         self.grayscale = grayscale
 
         self._latest: Optional[np.ndarray] = None
+        self._latest_t: Optional[float] = None   # perf_counter of the last frame (WGC only fires on change)
         self._lock = threading.Lock()
         self._frames = 0
         self._control = None
@@ -83,6 +84,7 @@ class ScreenCapture:
             bgr = np.ascontiguousarray(buf[:, :, :3])  # copy out as BGR
             with self._lock:
                 self._latest = bgr
+                self._latest_t = time.perf_counter()
                 self._frames += 1
 
         @self._cap.event
@@ -96,14 +98,29 @@ class ScreenCapture:
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < timeout:
             with self._lock:
-                if self._latest is not None:
-                    return
+                frame = self._latest
+            if frame is not None:
+                h, w = frame.shape[:2]
+                ar = w / max(h, 1)
+                logger.info("windows-capture first frame %dx%d (aspect %.2f)", w, h, ar)
+                if not (1.70 <= ar <= 1.82):           # the racing-line ROI is calibrated for 16:9
+                    logger.warning("capture aspect %.2f is not ~16:9 - the racing-line ROI may read the "
+                                   "HUD/minimap as chevrons; set capture.region or window_name for a "
+                                   "multi-monitor or non-16:9 setup", ar)
+                return
             time.sleep(0.01)
         self.close()
         raise RuntimeError(
             f"windows-capture produced no frame within {timeout}s "
             "(check monitor_index / window_name)."
         )
+
+    def frame_age(self) -> float:
+        """Seconds since the last captured frame (inf if none). WGC only fires on content change,
+        so a frozen game / alt-tab / load screen leaves the image stale while telemetry stays live."""
+        with self._lock:
+            t = self._latest_t
+        return float("inf") if t is None else time.perf_counter() - t
 
     # ---- capture ----------------------------------------------------------
     def grab(self) -> np.ndarray:

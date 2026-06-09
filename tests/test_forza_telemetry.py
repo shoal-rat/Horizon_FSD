@@ -85,7 +85,7 @@ class TestParsing(unittest.TestCase):
         self.assertAlmostEqual(t.speed_kmh, 180.0, places=3)
         self.assertAlmostEqual(t.position_x, 1000.5, places=3)
         self.assertAlmostEqual(t.position_z, -2000.0, places=3)
-        self.assertAlmostEqual(t.forward_speed, 49.0, places=3)
+        self.assertAlmostEqual(t.forward_speed, 50.0, places=3)  # ground speed, not world-frame velocity_z
         self.assertAlmostEqual(t.throttle, 200 / 255, places=6)
         self.assertAlmostEqual(t.brake, 10 / 255, places=6)
         self.assertAlmostEqual(t.steer_norm, -64 / 127, places=6)

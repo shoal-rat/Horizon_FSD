@@ -9,6 +9,8 @@ telemetry:
   port: 9999               # MUST equal the in-game Data Out port. Avoid 5200-5300 (game-reserved).
   packet_size: 324         # FH4/5 'Car Dash'. CONFIRM-IN-PHASE-0 against the live FH6 packet length.
   recv_timeout_s: 1.0
+  stale_after_s: 0.15      # telemetry older than this (alt-tab/hitch) = stale -> step ends 'telemetry_lost'
+  resume_timeout_s: 30.0   # after telemetry_lost, wait this long for the stream to come back before raising
 
 capture:                   # windows-capture (Windows.Graphics.Capture) backend
   monitor_index: 1         # 1-based monitor (1 = primary); ignored if window_name set
@@ -67,6 +69,21 @@ rl_safety:
   steer_limit: 0.55
   high_speed_steer_limit: 0.35
   high_speed_threshold: 15.0
+  recovery_grace_s: 1.5    # after a reset, skip crash detection this long so the dead-stop handoff
+  #                          doesn't immediately re-trip stuck/noprogress while the agent takes over
+
+detector:
+  # When to END an episode (and run recovery). Route-aware checks need centerline.npy.
+  offroad_rumble: 0.15         # surface rumble above this = off the paved road (ANY speed now)
+  offroad_seconds: 1.0         # ... sustained this long -> reset
+  offroute_dist: 18.0          # m from the route centreline = off the route -> reset (keeps the car
+  offroute_seconds: 0.8        #   NEAR the route so AutoDrive recovers it with a short drive, not a
+  #                                teleport to a distant road). Lower this to reset sooner.
+  noprogress_seconds: 5.0      # on-route but no centreline advance this long = circling/wrong-way -> reset
+  noprogress_min_advance: 3.0
+  stuck_speed: 2.0
+  stuck_seconds: 1.5
+  centerline_path: "C:/Horizon_FSD/centerline.npy"
 
 reset:
   # Reset/respawn in Horizon can place the car on a nearby flat surface, not
@@ -79,16 +96,17 @@ reset:
   min_recovered_speed: 3.0
   on_road_speed: 5.0
   autodrive_timeout_s: 45.0           # was 90: escalate to the pause-reset fallback sooner
-  autodrive_min_displacement: 12.0
   autodrive_prompt_retry_s: 1.0
   autodrive_prompt_attempts: 2        # was 12: the teleport prompt needs ONE A; never spam A into a live drive
   autodrive_prompt_settle_s: 0.8      # only A-tap after the car has been frozen this long (a real prompt)
   autodrive_prompt_window_s: 3.0      # ... and only within this window after opening AutoDrive
   autodrive_reissue_s: 10.0
+  autodrive_engage_deadline_s: 8.0    # bail to pause-reset if AutoDrive never moves the car (no waypoint)
   autodrive_progress_min_m: 2.0
   autodrive_on_route_settle_s: 0.7
   autodrive_persistent: true
   autodrive_persistent_retry_s: 2.0
+  persistent_max_seconds: 300.0       # give up + return FAILED after this, never an infinite hang
   autodrive_teleport_jump_m: 30.0
   persistent_max_backoff_s: 15.0
   heartbeat_every: 5

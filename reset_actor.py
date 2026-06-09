@@ -79,6 +79,22 @@ def main() -> int:
     ckpt["optims_state_dict"] = {}          # fresh optimisers (world-model moments re-warm quickly)
     torch.save(ckpt, path)
     print(f"\ndone. backup: {bak}")
+
+    # Resetting the reward HEAD doesn't fix STALE reward LABELS already frozen into replay episodes:
+    # they were computed by the OLD reward.py, so the fresh head would just learn the old targets.
+    # Purge them so they're regenerated under the current reward.
+    if args.reset_reward_head:
+        import glob
+        eps_dir = os.path.join(args.logdir, "train_eps")
+        stale = (glob.glob(os.path.join(eps_dir, "ws-*.npz"))
+                 + glob.glob(os.path.join(eps_dir, "recovery-*.npz")))
+        for f in stale:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        print(f"purged {len(stale)} stale-reward episodes (ws-*/recovery-*) from {eps_dir}")
+        print("  -> REBUILD warm-start before training: make_warmstart.py --logdir <logdir>")
     print("re-run train_dreamer.py: the tolerant load will keep the world model and start a fresh policy.")
     return 0
 

@@ -10,9 +10,14 @@ A reward function has signature:
 """
 from __future__ import annotations
 
+import logging
+import math
+import os
 from typing import Callable, Optional
 
 from forza_telemetry import ForzaTelemetry
+
+logger = logging.getLogger(__name__)
 
 RewardFn = Callable[[ForzaTelemetry, Optional[ForzaTelemetry]], float]
 
@@ -123,35 +128,54 @@ class DriveReward:
     def __init__(self, cfg: "DriveRewardConfig | None" = None) -> None:
         self.cfg = cfg or DriveRewardConfig()
         self._centerline = None
-        try:                                            # optional: present only after build_centerline.py
-            import os
-            from centerline import Centerline
-            if self.cfg.centerline_path and os.path.exists(self.cfg.centerline_path):
+        # Only fall back to the (circle-hackable) speed reward when NO centerline was requested.
+        # If a path is set AND the file exists but fails to load, FAIL LOUD - silently downgrading
+        # to the speed reward wastes a whole GPU run before anyone notices.
+        if self.cfg.centerline_path and os.path.exists(self.cfg.centerline_path):
+            try:
+                from centerline import Centerline
                 self._centerline = Centerline.load(self.cfg.centerline_path)
-        except Exception:
-            self._centerline = None
+            except Exception as e:
+                logger.exception("failed to load centerline %s", self.cfg.centerline_path)
+                raise RuntimeError(
+                    f"centerline {self.cfg.centerline_path} exists but won't load ({e}); refusing to "
+                    "fall back to the circle-hackable speed reward. Rebuild it with build_centerline.py "
+                    'or set centerline_path="" to use the speed reward deliberately.') from e
 
-    def _progress(self, t, prev_t, on_road: bool) -> float:
-        """Arc-length advance along the centerline (path progress, circle-proof); falls back to
-        capped forward speed when there's no centerline or no position (warm-start demos)."""
+    def _progress(self, t, prev_t, on_road: bool) -> tuple[float, Optional[float]]:
+        """Return (progress, ds) where ds = signed arc-length advance along the centerline (or None
+        when no centerline/position, e.g. warm-start demos). Path progress is circle-proof; the
+        fallback is capped speed. ds lets the caller gate the forward-speed bonus on REAL forward
+        motion so reversing can't farm it."""
         c = self.cfg
         if not on_road:
-            return 0.0
+            return 0.0, None
         if (self._centerline is not None and prev_t is not None
                 and hasattr(t, "position_x") and hasattr(prev_t, "position_x")):
-            s_now, lat = self._centerline.project(t.position_x, t.position_z)
-            s_prev, _ = self._centerline.project(prev_t.position_x, prev_t.position_z)
+            if not (math.isfinite(t.position_x) and math.isfinite(t.position_z)):
+                return 0.0, 0.0
+            s_now, lat = self._centerline.project(t.position_x, t.position_z)[:2]
+            s_prev, _ = self._centerline.project(prev_t.position_x, prev_t.position_z)[:2]
             ds = s_now - s_prev
             if lat <= c.route_max_dist and abs(ds) <= c.progress_jump_guard:
-                return (max(0.0, ds) / c.progress_max_step) * c.progress_scale
-            return 0.0                                  # off-route or teleport/seam -> no credit
-        fwd = max(0.0, t.speed)                          # fallback: capped forward speed
-        return (min(fwd, c.speed_cap) / c.speed_cap) * c.progress_scale
+                return (max(0.0, ds) / c.progress_max_step) * c.progress_scale, ds
+            return 0.0, 0.0                              # off-route or teleport/seam -> no credit, no forward
+        fwd = max(0.0, t.speed)                          # fallback: capped speed (warm-start demos drive fwd)
+        return (min(fwd, c.speed_cap) / c.speed_cap) * c.progress_scale, None
 
     def __call__(self, t, prev_t=None, action=None, prev_action=None) -> float:
         c = self.cfg
+        # non-finite physics -> 0.0 (defense-in-depth behind the telemetry finite-check); never let
+        # NaN/inf reach the async learner's gradients.
+        if not (math.isfinite(t.mean_surface_rumble) and math.isfinite(t.speed)
+                and math.isfinite(t.mean_tire_slip_ratio)):
+            return 0.0
         on_road = t.mean_surface_rumble < c.offroad_rumble
-        progress = self._progress(t, prev_t, on_road)
+        progress, ds = self._progress(t, prev_t, on_road)
+        # the speed bonuses (boot/launch) only pay for REAL forward motion: advancing along the route
+        # (ds>0), or - with no centerline - the warm-start demos, which drive forward. This stops a car
+        # from farming the speed bonus by REVERSING (ds<0, the circle-proof reward leaking back in).
+        fwd_ok = (ds is None) or (ds > 0.0)
         offroad = c.offroad_w * t.mean_surface_rumble
         slip = c.slip_w * max(0.0, t.mean_tire_slip_ratio - c.slip_deadband)
         jerk = 0.0
@@ -168,7 +192,7 @@ class DriveReward:
                                      / max(1e-6, c.low_speed_steer_speed)))
             steer_pen = (c.steer_w + c.low_speed_steer_w * low_speed) * steer * steer
             brake_pen = c.brake_w * brake * (0.5 + low_speed)
-            launch = c.launch_w * low_speed * max(0.0, throttle - brake) if on_road else 0.0
+            launch = c.launch_w * low_speed * max(0.0, throttle - brake) if (on_road and fwd_ok) else 0.0
         # anti-circling: penalize sustained yaw beyond a cornering deadband, so the agent
         # can't farm the speed reward by spinning in place. Live telemetry only (the
         # warm-start shim has no yaw -> 0 penalty, correct: the demos drive straight).
@@ -176,7 +200,8 @@ class DriveReward:
         spin = c.spin_w * max(0.0, yaw_rate - c.spin_deadband)
         # dense bootstrap: small forward-speed bonus on-road (see boot_w). Circling has speed
         # too, but its spin penalty (>boot) keeps it net-negative, so this can't revive the hack.
-        boot = c.boot_w * (min(max(0.0, t.speed), c.speed_cap) / c.speed_cap) if on_road else 0.0
+        boot = c.boot_w * (min(max(0.0, t.speed), c.speed_cap) / c.speed_cap) if (on_road and fwd_ok) else 0.0
         idle = c.idle_w if on_road and max(0.0, t.speed) < c.idle_speed else 0.0
-        return float(progress + boot + launch - offroad - slip - jerk - spin
-                     - steer_pen - brake_pen - idle)
+        r = float(progress + boot + launch - offroad - slip - jerk - spin
+                  - steer_pen - brake_pen - idle)
+        return r if math.isfinite(r) else 0.0

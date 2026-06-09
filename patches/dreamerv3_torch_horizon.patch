@@ -20,19 +20,21 @@ index 8d8d7ae..e2e11da 100644
 +  steps: 1e6
 +  envs: 1
 +  parallel: False
-+  precision: 16             # mixed precision for shared-GPU FH6 runs
-+  pretrain: 200             # warm actor/reward head before live control
++  precision: 16             # mixed precision (fp32 = ~184s/step on the 4070!)
++  pretrain: 200             # warm actor/reward head before the car takes live control
 +  action_repeat: 2          # 10Hz effective control
-+  time_limit: 1200          # //action_repeat -> ~60s episodes @10Hz
++  time_limit: 1200          # //action_repeat -> 600 decisions (~60s episodes @10Hz)
 +  grayscale: True
-+  prefill: 2500
-+  train_ratio: 4
++  prefill: 2500             # warm-start episodes count toward this (live prefill skipped if covered)
++  train_ratio: 4            # was 8: half the training load -> less GPU contention -> smoother driving
 +  compile: False
-+  video_pred_log: False
-+  eval_episode_num: 0
-+  eval_every: 12000
++  video_pred_log: False     # avoid moviepy dependency for now
++  eval_episode_num: 0       # no separate eval episodes during the shakedown
++  eval_every: 12000         # //action_repeat -> ~10min checkpoint cadence
 +  log_every: 200
-+  async_train: True
++  async_train: True         # train in a background thread (Horizon FSD) so the control loop
++  #                           isn't stalled by grad steps; paced to train_ratio, uses reset idle time
++  # --- LEAN model + batch: FH6 + Dreamer share an 8GB GPU, so shrink to fit (~<1GB) ---
 +  batch_size: 4
 +  batch_length: 32
 +  dyn_hidden: 256
@@ -42,7 +44,7 @@ index 8d8d7ae..e2e11da 100644
 +  encoder: {mlp_keys: 'speed|line', cnn_keys: 'image', cnn_depth: 16}
 +  decoder: {mlp_keys: 'speed|line', cnn_keys: 'image', cnn_depth: 16}
 diff --git a/dreamer.py b/dreamer.py
-index f4de475..8e7412a 100644
+index f4de475..e8fb986 100644
 --- a/dreamer.py
 +++ b/dreamer.py
 @@ -3,6 +3,8 @@ import functools
@@ -54,17 +56,18 @@ index f4de475..8e7412a 100644
  
  os.environ["MUJOCO_GL"] = "osmesa"
  
-@@ -37,6 +39,9 @@ class Dreamer(nn.Module):
+@@ -37,6 +39,10 @@ class Dreamer(nn.Module):
          self._should_reset = tools.Every(config.reset_every)
          self._should_expl = tools.Until(int(config.expl_until / config.action_repeat))
          self._metrics = {}
-+        self._metrics_lock = threading.Lock()
-+        self._learner_thread = None
++        self._metrics_lock = threading.Lock()   # _metrics is written by the async learner thread
++        self._train_lock = threading.Lock()     # serialize _train vs the checkpoint snapshot (no torn save)
++        self._learner_thread = None             # background trainer (see _ensure_learner)
 +        self._learner_stop = threading.Event()
          # this is update step
          self._step = logger.step // config.action_repeat
          self._update_count = 0
-@@ -58,19 +63,31 @@ class Dreamer(nn.Module):
+@@ -58,19 +64,31 @@ class Dreamer(nn.Module):
      def __call__(self, obs, reset, state=None, training=True):
          step = self._step
          if training:
@@ -76,7 +79,6 @@ index f4de475..8e7412a 100644
 -            for _ in range(steps):
 -                self._train(next(self._dataset))
 -                self._update_count += 1
--                self._metrics["update_count"] = self._update_count
 +            if getattr(self._config, "async_train", False):
 +                if self._should_pretrain():
 +                    print(f"[pretrain] running {int(self._config.pretrain)} synchronous updates "
@@ -84,7 +86,7 @@ index f4de475..8e7412a 100644
 +                    for _ in range(int(self._config.pretrain)):
 +                        self._safe_train()
 +                    print(f"[pretrain] done ({self._update_count} updates); starting live control")
-+                self._ensure_learner()
++                self._ensure_learner()          # train in the background; don't stall the control loop
 +            else:
 +                steps = (
 +                    self._config.pretrain
@@ -94,7 +96,7 @@ index f4de475..8e7412a 100644
 +                for _ in range(steps):
 +                    self._train(next(self._dataset))
 +                    self._update_count += 1
-+                    self._metrics["update_count"] = self._update_count
+                 self._metrics["update_count"] = self._update_count
              if self._should_log(step):
 -                for name, values in self._metrics.items():
 -                    self._logger.scalar(name, float(np.mean(values)))
@@ -108,7 +110,7 @@ index f4de475..8e7412a 100644
                  if self._config.video_pred_log:
                      openl = self._wm.video_pred(next(self._dataset))
                      self._logger.video("train_openl", to_np(openl))
-@@ -126,11 +143,44 @@ class Dreamer(nn.Module):
+@@ -126,11 +144,62 @@ class Dreamer(nn.Module):
          if self._config.expl_behavior != "greedy":
              mets = self._expl_behavior.train(start, context, data)[-1]
              metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -124,7 +126,12 @@ index f4de475..8e7412a 100644
 +                else:
 +                    self._metrics[name].append(value)
 +
++    # ---- async learner (Horizon FSD) -------------------------------------
 +    def _ensure_learner(self):
++        """Start the background training thread once. It trains continuously but PACED to
++        the train_ratio budget (grad steps <= env_steps * train_ratio / batch_steps), so it
++        catches up using idle GPU time (the multi-second resets, the per-tick sleeps) without
++        hogging the GPU while the car is actively driving."""
 +        if self._learner_thread is not None:
 +            return
 +        batch_steps = self._config.batch_size * self._config.batch_length
@@ -137,7 +144,7 @@ index f4de475..8e7412a 100644
 +                if (self._update_count - base_update) < budget:
 +                    self._safe_train()
 +                else:
-+                    self._learner_stop.wait(0.05)
++                    self._learner_stop.wait(0.05)                 # at budget -> yield the GPU to control
 +
 +        self._learner_thread = threading.Thread(target=_loop, name="dreamer-learner", daemon=True)
 +        self._learner_thread.start()
@@ -145,15 +152,33 @@ index f4de475..8e7412a 100644
 +
 +    def _safe_train(self):
 +        try:
-+            self._train(next(self._dataset))
++            data = next(self._dataset)
++            with self._train_lock:              # held so a checkpoint snapshot can't read mid-step params
++                self._train(data)
 +            self._update_count += 1
 +        except Exception:
 +            traceback.print_exc()
-+            self._learner_stop.wait(0.5)
++            self._learner_stop.wait(0.5)        # don't spin-loop on a transient error
++
++    def snapshot_for_save(self):
++        """Checkpoint dict taken UNDER the train lock, so the learner isn't mid optimizer.step when we
++        read params/optimizer state - otherwise the save is torn (some tensors pre-step, moments
++        inconsistent) and the tolerant loader accepts the corruption silently."""
++        with self._train_lock:
++            return {
++                "agent_state_dict": {k: v.detach().cpu() for k, v in self.state_dict().items()},
++                "optims_state_dict": tools.recursively_collect_optim_state_dict(self),
++            }
++
++    def stop_learner(self):
++        self._learner_stop.set()
++        if self._learner_thread is not None:
++            self._learner_thread.join(timeout=30)
++            self._learner_thread = None
  
  
  def count_steps(folder):
-@@ -193,6 +243,11 @@ def make_env(config, mode, id):
+@@ -193,6 +262,11 @@ def make_env(config, mode, id):
  
          env = minecraft.make_env(task, size=config.size, break_speed=config.break_speed)
          env = wrappers.OneHotAction(env)
@@ -165,13 +190,17 @@ index f4de475..8e7412a 100644
      else:
          raise NotImplementedError(suite)
      env = wrappers.TimeLimit(env, config.time_limit)
-@@ -294,9 +349,35 @@ def main(config):
+@@ -294,9 +368,35 @@ def main(config):
      agent.requires_grad_(requires_grad=False)
      if (logdir / "latest.pt").exists():
          checkpoint = torch.load(logdir / "latest.pt")
 -        agent.load_state_dict(checkpoint["agent_state_dict"])
 -        tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
 -        agent._should_pretrain._once = False
++        # TOLERANT load (Horizon FSD edit #5): keep every weight whose name+shape still
++        # matches, re-init only what changed. Lets us add an observation key (e.g. the
++        # racing-line feature -> the speed/line MLP) WITHOUT discarding the expensive
++        # image CNN + RSSM dynamics learned over a long run.
 +        saved = checkpoint["agent_state_dict"]
 +        model_sd = agent.state_dict()
 +        kept = {k: v for k, v in saved.items() if k in model_sd and v.shape == model_sd[k].shape}
@@ -180,7 +209,7 @@ index f4de475..8e7412a 100644
 +        if reinit:
 +            print(f"[checkpoint] kept {len(kept)}/{len(model_sd)} tensors; "
 +                  f"re-init {len(reinit)} (obs/shape change): {reinit[:4]}{'...' if len(reinit) > 4 else ''}")
-+            try:
++            try:                                  # optimiser moments for changed params won't match
 +                tools.recursively_load_optim_state_dict(agent, checkpoint["optims_state_dict"])
 +            except Exception as e:
 +                print(f"[checkpoint] optimiser state not restored ({type(e).__name__}); using fresh optim")
@@ -200,7 +229,24 @@ index f4de475..8e7412a 100644
  
      # make sure eval will be executed once after config.steps
      while agent._step < config.steps + config.eval_every:
-@@ -343,7 +424,7 @@ if __name__ == "__main__":
+@@ -327,11 +427,11 @@ def main(config):
+             steps=config.eval_every,
+             state=state,
+         )
+-        items_to_save = {
+-            "agent_state_dict": agent.state_dict(),
+-            "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
+-        }
+-        torch.save(items_to_save, logdir / "latest.pt")
++        torch.save(agent.snapshot_for_save(), logdir / "latest.pt")
++    # clean shutdown: stop the background learner and take ONE final consistent checkpoint before
++    # closing the envs, so the daemon learner isn't killed mid-step racing the last save.
++    agent.stop_learner()
++    torch.save(agent.snapshot_for_save(), logdir / "latest.pt")
+     for env in train_envs + eval_envs:
+         try:
+             env.close()
+@@ -343,7 +443,7 @@ if __name__ == "__main__":
      parser = argparse.ArgumentParser()
      parser.add_argument("--configs", nargs="+")
      args, remaining = parser.parse_known_args()
@@ -208,13 +254,19 @@ index f4de475..8e7412a 100644
 +    configs = yaml.YAML(typ="safe").load(
          (pathlib.Path(sys.argv[0]).parent / "configs.yaml").read_text()
      )
+ 
 diff --git a/envs/forza.py b/envs/forza.py
 new file mode 100644
+index 0000000..c37c6d8
 --- /dev/null
 +++ b/envs/forza.py
 @@ -0,0 +1,15 @@
 +"""
 +Bridge: expose Horizon FSD's real-time env to NM512 dreamer's make_env.
++
++The actual env (ForzaDriveEnv) lives in the Horizon FSD project repo; this thin
++shim just puts that repo on sys.path and re-exports it, so the vendored Dreamer
++code stays otherwise untouched. Override the location with HORIZON_FSD_DIR.
 +"""
 +import os
 +import sys
@@ -225,9 +277,10 @@ new file mode 100644
 +
 +from forza_rl_env import ForzaDriveEnv  # noqa: E402,F401
 diff --git a/tools.py b/tools.py
+index 3efb932..07a3f60 100644
 --- a/tools.py
 +++ b/tools.py
-@@ -164,6 +164,11 @@ def simulate(
+@@ -163,6 +163,11 @@ def simulate(
                  add_to_cache(cache, envs[index].id, t)
                  # replace obs with done by initial state
                  obs[index] = result
@@ -239,8 +292,7 @@ diff --git a/tools.py b/tools.py
          # step agents
          obs = {k: np.stack([o[k] for o in obs]) for k in obs[0] if "log_" not in k}
          action, agent_state = agent(obs, done, agent_state)
-@@ -216,6 +216,10 @@ def simulate(
-                         # log items won't be used later
+@@ -216,6 +221,10 @@ def simulate(
                          cache[envs[i].id].pop(key)
  
                  if not is_eval:
@@ -251,7 +303,7 @@ diff --git a/tools.py b/tools.py
                      step_in_dataset = erase_over_episodes(cache, limit)
                      logger.scalar(f"dataset_size", step_in_dataset)
                      logger.scalar(f"train_return", score)
-@@ -318,12 +323,13 @@ def sample_episodes(episodes, length, seed=0):
+@@ -325,12 +334,13 @@ def sample_episodes(episodes, length, seed=0):
      while True:
          size = 0
          ret = None
@@ -267,7 +319,7 @@ diff --git a/tools.py b/tools.py
              total = len(next(iter(episode.values())))
              # make sure at least one transition included
              if total < 2:
-@@ -395,6 +399,33 @@ def load_episodes(directory, limit=None, reverse=True):
+@@ -395,6 +405,33 @@ def load_episodes(directory, limit=None, reverse=True):
      return episodes
  
  

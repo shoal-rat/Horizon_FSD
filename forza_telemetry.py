@@ -19,6 +19,7 @@ to telemetry_probe.FIELDS so the two never drift.
 from __future__ import annotations
 
 import dataclasses
+import math
 import struct
 from dataclasses import dataclass
 
@@ -194,13 +195,26 @@ class ForzaTelemetry:
         older-build packets, padded). Raises ValueError on any other length."""
         n = len(payload)
         if n == PACKET_SIZE:
-            return cls(*_STRUCT.unpack(payload))
-        if n == PACKET_SIZE - 1:  # 323-byte build: missing the trailing byte
-            return cls(*_STRUCT.unpack(payload + b"\x00"))
-        raise ValueError(
-            f"unexpected packet length {n}; expected {PACKET_SIZE} "
-            f"(or {PACKET_SIZE - 1}) for the FH 'Car Dash' format"
-        )
+            obj = cls(*_STRUCT.unpack(payload))
+        elif n == PACKET_SIZE - 1:  # 323-byte build: missing the trailing byte
+            obj = cls(*_STRUCT.unpack(payload + b"\x00"))
+        else:
+            raise ValueError(
+                f"unexpected packet length {n}; expected {PACKET_SIZE} "
+                f"(or {PACKET_SIZE - 1}) for the FH 'Car Dash' format"
+            )
+        # Reject a garbage frame at the boundary: one NaN/inf physics field would otherwise
+        # silently poison reward/detector/centerline/obs (and the async learner's gradients).
+        # The receiver catches this ValueError, drops the frame, and keeps the last good one.
+        for v in (obj.speed, obj.velocity_z, obj.position_x, obj.position_z,
+                  obj.roll, obj.pitch, obj.angular_velocity_y,
+                  obj.surface_rumble_fl, obj.surface_rumble_fr,
+                  obj.surface_rumble_rl, obj.surface_rumble_rr,
+                  obj.tire_slip_ratio_fl, obj.tire_slip_ratio_fr,
+                  obj.tire_slip_ratio_rl, obj.tire_slip_ratio_rr):
+            if not math.isfinite(v):
+                raise ValueError("non-finite physics field in Data Out packet")
+        return obj
 
     # ---- driving-friendly derived values ----------------------------------
     @property
@@ -257,8 +271,11 @@ class ForzaTelemetry:
 
     @property
     def forward_speed(self) -> float:
-        """Local forward velocity (m/s); negative when reversing."""
-        return self.velocity_z
+        """Ground speed (m/s), frame-independent. NOTE: Velocity X/Y/Z are WORLD-frame in Data
+        Out, so velocity_z is NOT local forward speed (it only equals it when the car points
+        along world +Z). We return the scalar `speed`; for a SIGNED forward component, project
+        velocity onto heading via yaw - but verify the yaw sign against live FH6 first."""
+        return self.speed
 
     @property
     def mean_tire_slip_ratio(self) -> float:

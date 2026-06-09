@@ -38,19 +38,30 @@ displacement** (not instantaneous speed) as a small state machine:
   whenever `speed < 2`, which spammed `A` into a live AutoDrive drive through every slow corner —
   and a stray `A` cancels AutoDrive.
 
+## When the episode ends (CrashDetector) — and why it matters for recovery
+
+The episode ends (and recovery runs) on: `impact`, `stuck`, `flipped`, `offroad`, **`offroute`**,
+**`noprogress`**. Two route-aware terminations were added (they need `centerline.npy`):
+
+- **offroad** now fires at **any speed** (the old `speed < 10` gate let a car drive *fast*
+  off-road forever without resetting).
+- **offroute**: lateral distance from the route centreline > `offroute_dist` (18 m). Ending the
+  episode the moment the car leaves the route keeps it **near** the route, so AutoDrive recovers
+  it with a short drive — instead of letting it wander far, where AutoDrive's teleport drops it on
+  a distant road with a long drive back to the waypoint.
+- **noprogress**: on-route but centreline arc-length not advancing for `noprogress_seconds` (5 s)
+  = circling / wrong-way / stuck-at-speed.
+
 ## The recovery ladder (recover())
 
-- `impact` / `stuck` / `flipped` → `[rewind, autodrive, reset_position, reset_to_road]`
-- `offroad` / unknown → `[autodrive, reset_position, reset_to_road]`
-- AutoDrive is primary (covers far-teleport + on-road-drive). Reset Car Position is the **last
-  rung**, not a queue-jumping escalation — reached each round only if everything above failed.
-- A flipped car: rewind (if recent) → AutoDrive's transfer branch rights it when off-road →
-  reset position. (AutoDrive *can* recover a flipped car via its teleport — the old "AutoDrive
-  cannot un-flip" claim was wrong.)
-- After `max_consecutive_rewinds` quick repeats, rewind is dropped so we don't bounce off the
-  same wall.
-- `autodrive_persistent` (unattended): never returns FAILED; re-runs the full ladder (ending in
-  the pause reset) with capped backoff + a heartbeat log — never a silent hang.
+Every reason uses the same ladder: **`[autodrive, reset_position, reset_to_road]`**.
+
+- **Rewind is removed** (unreliable on this build; AutoDrive only).
+- AutoDrive is primary — it covers far-teleport *and* on-road-drive, and its transfer branch even
+  rights a flipped car. Reset Car Position is the **last-resort rung**, reached each round only if
+  AutoDrive can't route the car.
+- `autodrive_persistent` (unattended): never returns FAILED; re-runs the ladder (ending in the
+  pause reset) with capped backoff + a heartbeat log — never a silent hang.
 
 ## After AutoDrive succeeds
 

@@ -28,6 +28,7 @@ class TelemetryReceiver:
         self._sock.settimeout(recv_timeout)
 
         self._latest: Optional[ForzaTelemetry] = None
+        self._recv_t: Optional[float] = None   # perf_counter when _latest was received (freshness clock)
         self._packets = 0
         self._bad = 0
         self._lock = threading.Lock()
@@ -55,14 +56,32 @@ class TelemetryReceiver:
             except ValueError:
                 with self._lock:
                     self._bad += 1
+                    bad, good = self._bad, self._packets
+                if bad % 50 == 1:               # periodic, so a wrong-format flood is visible at runtime
+                    logger.warning("telemetry: %d bad packets (last len=%d, good=%d) - wrong Data Out "
+                                   "format/port? expecting the 324-byte 'Car Dash' format", bad, len(data), good)
                 continue
             with self._lock:
                 self._latest = telemetry
+                self._recv_t = time.perf_counter()
                 self._packets += 1
 
-    def latest(self) -> Optional[ForzaTelemetry]:
+    def latest(self, max_age: Optional[float] = None) -> Optional[ForzaTelemetry]:
+        """Most recent good packet, or None. With max_age set, also None if the stream has gone
+        STALE (no fresh packet within max_age s) - so a frozen game/alt-tab can't feed phantom data."""
         with self._lock:
-            return self._latest
+            t, rt = self._latest, self._recv_t
+        if t is None:
+            return None
+        if max_age is not None and (rt is None or time.perf_counter() - rt > max_age):
+            return None
+        return t
+
+    def age(self) -> Optional[float]:
+        """Seconds since the last good packet (None if none yet)."""
+        with self._lock:
+            rt = self._recv_t
+        return None if rt is None else time.perf_counter() - rt
 
     @property
     def packet_count(self) -> int:
@@ -74,10 +93,12 @@ class TelemetryReceiver:
         with self._lock:
             return self._bad
 
-    def wait_for_packet(self, timeout: float = 5.0) -> bool:
+    def wait_for_packet(self, timeout: float = 5.0, max_age: float = 0.5) -> bool:
+        """Wait until a FRESH packet has arrived (received within max_age s), not merely until one
+        was ever seen - so a frozen stream reads as 'no live telemetry', not a stale success."""
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < timeout:
-            if self.latest() is not None:
+            if self.latest(max_age=max_age) is not None:
                 return True
             time.sleep(0.02)
         return False

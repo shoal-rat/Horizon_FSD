@@ -9,6 +9,8 @@ driving in circles (a closed loop nets ~0, reversing is negative) and it works i
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -25,15 +27,29 @@ class Centerline:
         self.cum = np.concatenate([[0.0], np.cumsum(self._seglen)])  # arc-length at each vertex
         self.length = float(self.cum[-1])
 
-    def project(self, x: float, z: float) -> tuple[float, float]:
-        """Nearest point on the polyline -> (arc_length_s, lateral_distance)."""
+    def project(self, x: float, z: float) -> tuple[float, float, bool]:
+        """Nearest point on the polyline -> (arc_length_s, lateral_distance, at_end).
+
+        Non-finite input fails SAFE: returns (nan, inf, False) so `inf > offroute_dist` reads as
+        off-route (a debounced reset) rather than silently being missed. Past the OPEN end of the
+        route, lateral_distance is the PERPENDICULAR distance to the last segment's line (not the
+        endpoint distance, which would read along-track overshoot as huge lateral error) and
+        at_end=True - so driving straight past the finish isn't mistaken for going off-route."""
         px, pz = float(x), float(z)
-        t = (((np.array([px, pz]) - self._a) * self._ab).sum(1) / self._ab2).clip(0.0, 1.0)
+        if not (math.isfinite(px) and math.isfinite(pz)):
+            return float("nan"), float("inf"), False
+        rel = np.array([px, pz]) - self._a
+        t_raw = (rel * self._ab).sum(1) / self._ab2
+        t = t_raw.clip(0.0, 1.0)
         proj = self._a + t[:, None] * self._ab
         d = np.hypot(proj[:, 0] - px, proj[:, 1] - pz)
         i = int(d.argmin())
         s = self.cum[i] + t[i] * self._seglen[i]
-        return float(s), float(d[i])
+        if i == len(self._ab) - 1 and t_raw[i] > 1.0:          # projected past the final vertex
+            ab = self._ab[i]
+            lat = abs(rel[i, 0] * ab[1] - rel[i, 1] * ab[0]) / max(self._seglen[i], 1e-9)
+            return float(s), float(lat), True
+        return float(s), float(d[i]), False
 
     @classmethod
     def load(cls, path: str) -> "Centerline":
