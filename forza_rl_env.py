@@ -32,6 +32,19 @@ from recovery_demo import RecoveryDemoConfig, RecoveryDemoRecorder
 from reward import DriveReward, DriveRewardConfig
 from telemetry_receiver import TelemetryReceiver
 
+from dataclasses import fields as _dc_fields
+
+
+def _cfg_kwargs(dc_cls, d: dict) -> dict:
+    """Keep only keys that are real fields of `dc_cls`, so a stale or renamed config.yaml key
+    can't crash env construction (e.g. a ResetConfig field removed in code but left in YAML).
+    Warns about dropped keys so the drift is visible."""
+    valid = {f.name for f in _dc_fields(dc_cls)}
+    extra = [k for k in d if k not in valid]
+    if extra:
+        print(f"[config] ignoring unknown {dc_cls.__name__} keys: {sorted(extra)}")
+    return {k: v for k, v in d.items() if k in valid}
+
 
 class ForzaDriveEnv:
     metadata = {}
@@ -57,12 +70,12 @@ class ForzaDriveEnv:
         self.rx.start()
         self.gamepad = ForzaGamepad()
         self.detector = CrashDetector()
-        self.reward_fn = DriveReward(DriveRewardConfig(**cfg.get("rl_reward", {})))
+        self.reward_fn = DriveReward(DriveRewardConfig(**_cfg_kwargs(DriveRewardConfig, cfg.get("rl_reward", {}))))
         self.line_reader = RacingLineReader()     # reads FH's driving line from the colour frame
         demo_cfg_dict = dict(cfg.get("recovery_demos", {}))
         if os.environ.get("HORIZON_FSD_LOGDIR"):
             demo_cfg_dict["out_dir"] = os.path.join(os.environ["HORIZON_FSD_LOGDIR"], "train_eps")
-        demo_cfg = RecoveryDemoConfig(**demo_cfg_dict)
+        demo_cfg = RecoveryDemoConfig(**_cfg_kwargs(RecoveryDemoConfig, demo_cfg_dict))
         self.recovery_demo = RecoveryDemoRecorder(
             self.capture,
             self.line_reader,
@@ -72,7 +85,7 @@ class ForzaDriveEnv:
         self.resetter = ForzaResetter(
             self.gamepad,
             self.rx,
-            ResetConfig(**cfg.get("reset", {})),
+            ResetConfig(**_cfg_kwargs(ResetConfig, cfg.get("reset", {}))),
             demo_recorder=self.recovery_demo,
         )
         safety = cfg.get("rl_safety", {})
