@@ -136,6 +136,33 @@ class TestForzaResetter(unittest.TestCase):
         self.assertTrue(resetter.autodrive_reset())
         self.assertIn("A", pad.taps)
 
+    def test_confirm_a_fires_after_coasting_then_frozen(self):
+        # THE bug from the live "Fast Travel Warning" prompt: a car still COASTING when recovery starts
+        # tripped the old cumulative-displacement `driving` flag, which BLOCKED the confirm-A that accepts
+        # the teleport prompt. Now the A is gated on the car being positionally FROZEN, so it fires even
+        # after a coast-down. (Calling _wait_autodrive_resolved directly, so the only A taps are the prompt
+        # confirms - not _open_autodrive's menu-select A.)
+        coast = [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)]   # rolls forward (sets `driving`), then holds at (10,0)
+
+        class CoastRx:
+            def __init__(self):
+                self.i = 0
+
+            def latest(self):
+                p = coast[self.i] if self.i < len(coast) else (10.0, 0.0)
+                self.i += 1
+                return FakeTelemetry(speed=0.0, is_driving=False, position_x=p[0], position_z=p[1])
+
+        pad = FakePad()
+        resetter = ForzaResetter(
+            pad, CoastRx(),
+            ResetConfig(press_gap_s=0.0, autodrive_timeout_s=1.0, autodrive_prompt_retry_s=0.0,
+                        autodrive_prompt_settle_s=0.2, autodrive_frozen_eps=0.5,
+                        autodrive_teleport_jump_m=30.0),
+        )
+        resetter._wait_autodrive_resolved((0.0, 0.0))
+        self.assertIn("A", pad.taps)                    # confirmed the prompt despite the initial coast
+
     def test_recovered_state_rejects_position_far_from_centerline(self):
         resetter = ForzaResetter(
             FakePad(),

@@ -246,12 +246,14 @@ class ResetConfig:
     press_gap_s: float = 0.5          # gap between AutoDrive menu presses (was 0.35: too fast, missed presses)
     tap_hold_s: float = 0.10          # hold the D-pad menu taps a touch longer than the 0.08 default
     confirm_hold_s: float = 0.15      # hold A longer so the AutoDrive confirm isn't dropped
-    autodrive_prompt_retry_s: float = 1.0 # gap between A taps while the teleport prompt is up
-    autodrive_prompt_attempts: int = 2    # the teleport prompt needs ONE A; cap low (was 12: it spammed
-    #                                       A into a live AutoDrive drive every time speed dipped, cancelling it)
-    autodrive_prompt_settle_s: float = 0.8 # don't A-tap until the car has been frozen this long (a real
-    #                                        prompt holds it still; the on-road drive branch starts moving)
-    autodrive_prompt_window_s: float = 3.0 # ... and only within this window after opening AutoDrive
+    autodrive_prompt_retry_s: float = 1.0 # gap between confirm-A taps while the prompt is up
+    autodrive_prompt_attempts: int = 3    # confirm-A presses for the teleport prompt. Sent ONLY while the
+    #                                       car is FROZEN (a modal holds it still), so a couple of spares are
+    #                                       safe and cover a missed first press / a late prompt.
+    autodrive_prompt_settle_s: float = 0.6 # the car must be positionally FROZEN this long before the confirm-A,
+    #                                        so we never tap during the post-crash COAST-DOWN nor into a live
+    #                                        AutoDrive drive (both keep the car moving). NOT a window after open.
+    autodrive_frozen_eps: float = 0.5     # per-tick world motion (m) at/below which the car counts as frozen
     autodrive_reissue_s: float = 10.0 # no progress this long -> re-open ANNA AutoDrive
     autodrive_engage_deadline_s: float = 8.0  # if AutoDrive never moves the car by now (no waypoint /
     #                                           unroutable), bail to the pause-reset instead of waiting out
@@ -381,6 +383,7 @@ class ForzaResetter:
         last_a = t0 - c.autodrive_prompt_retry_s
         last_reissue = t0
         last_progress = t0
+        last_move = t0                         # last tick the car's world position changed appreciably
         prev_pos = start_pos
         last_pos = start_pos
         teleported = False
@@ -403,21 +406,26 @@ class ForzaResetter:
                 route_seen_since = None
 
             pos = self._position()
-            if self._displacement(prev_pos, pos) > c.autodrive_teleport_jump_m:
+            step_move = self._displacement(prev_pos, pos)   # how far the car moved THIS tick
+            if step_move > c.autodrive_teleport_jump_m:
                 teleported = True              # a discrete snap to road centre = the prompt was accepted
+            if step_move > c.autodrive_frozen_eps:
+                last_move = now                # the car is moving (coast-down / AutoDrive driving / teleport)
             if pos is not None:
                 prev_pos = pos
             if self._displacement(start_pos, pos) >= c.autodrive_progress_min_m:
-                driving = True                 # net displacement => AutoDrive is driving; stop touching A
+                driving = True                 # net displacement from start => engaged/coasted at some point
             if self._displacement(last_pos, pos) >= c.autodrive_progress_min_m:
                 last_pos = pos
                 last_progress = now
 
-            # Accept the teleport PROMPT only: frozen (no net displacement), after a settle, within the
-            # window, capped. Once it teleports OR drives, NEVER tap A again (that would cancel AutoDrive).
-            elapsed = now - t0
-            if (not teleported and not driving
-                    and c.autodrive_prompt_settle_s <= elapsed < c.autodrive_prompt_window_s
+            # Confirm the teleport PROMPT (this is a modal: it holds the car positionally FROZEN). Tap A
+            # only after the car has been FROZEN for the settle - NOT gated on cumulative displacement,
+            # because a car still COASTING from the crash trips `driving` and would wrongly block the very
+            # A that accepts this prompt. Frozen != a live drive, so A here can't cancel AutoDrive. Stop
+            # the instant it teleports.
+            frozen_for = now - last_move
+            if (not teleported and frozen_for >= c.autodrive_prompt_settle_s
                     and prompt_presses < c.autodrive_prompt_attempts
                     and now - last_a >= c.autodrive_prompt_retry_s):
                 self.pad.tap_button(c.confirm_button, hold_s=c.confirm_hold_s)
@@ -432,11 +440,14 @@ class ForzaResetter:
                 last_reissue = now
                 last_progress = now
 
-            # ...and if it STILL hasn't moved the car by the engage deadline, bail early to the
-            # pause-reset fallback rather than burning the whole timeout on every crash.
-            if not driving and not teleported and elapsed > c.autodrive_engage_deadline_s:
-                logger.warning("AutoDrive did not engage in %.0fs (no displacement) - is a route "
-                               "waypoint pinned? falling through to the pause-reset fallback", elapsed)
+            # ...and if it has neither teleported nor recovered by the engage deadline AFTER the confirm-A
+            # presses were spent (the prompt didn't take, or there's no waypoint), bail to the pause-reset
+            # rather than burning the whole timeout. NOT gated on `driving`: the post-crash coast-down sets
+            # it and would wedge us here forever.
+            if (not teleported and now - t0 > c.autodrive_engage_deadline_s
+                    and prompt_presses >= c.autodrive_prompt_attempts):
+                logger.warning("AutoDrive did not engage in %.0fs (prompt unconfirmed / no waypoint pinned?) "
+                               "- falling through to the pause-reset fallback", now - t0)
                 return False, teleported
 
             time.sleep(0.05)

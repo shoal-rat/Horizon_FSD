@@ -97,9 +97,9 @@ reset:
   on_road_speed: 5.0
   autodrive_timeout_s: 45.0           # was 90: escalate to the pause-reset fallback sooner
   autodrive_prompt_retry_s: 1.0
-  autodrive_prompt_attempts: 2        # was 12: the teleport prompt needs ONE A; never spam A into a live drive
-  autodrive_prompt_settle_s: 0.8      # only A-tap after the car has been frozen this long (a real prompt)
-  autodrive_prompt_window_s: 3.0      # ... and only within this window after opening AutoDrive
+  autodrive_prompt_attempts: 3        # confirm-A presses for the teleport prompt; only sent while FROZEN
+  autodrive_prompt_settle_s: 0.6      # car must be positionally frozen this long before the confirm-A
+  autodrive_frozen_eps: 0.5           # per-tick world motion (m) at/below which the car counts as frozen
   autodrive_reissue_s: 10.0
   autodrive_engage_deadline_s: 8.0    # bail to pause-reset if AutoDrive never moves the car (no waypoint)
   autodrive_progress_min_m: 2.0
