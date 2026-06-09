@@ -14,10 +14,16 @@ strategy update.
 - Reworked AutoDrive recovery around the observed FH6 behavior:
   - far off-road can show a Fast Travel Warning / transfer prompt
   - on-road stuck states usually have no prompt and AutoDrive drives back
-  - confirm `A` is only sent while the car is positionally frozen
+  - confirm `A` is only sent while the car is positionally frozen, which fixes the
+    case where coast-down after a crash blocked the confirm press
+  - a drivable parallel road is accepted instead of teleporting a fine car
+  - when every recovery option is exhausted the run pauses for manual help instead
+    of crashing the training process
 - Added `forza_full` Dreamer config for larger world-model training when GPU
   headroom is available.
 - Added `train_dreamer.py --config` so `forza` and `forza_full` are selectable.
+- Redrew the README diagrams (hero, architecture, recovery loop, hardening stack)
+  with a consistent visual language.
 - Added stress tests for NaN/inf handling, malformed packets, teleport jumps,
   route seams, braking-vs-impact, route ends, offroute, noprogress, and stuck
   edge cases.

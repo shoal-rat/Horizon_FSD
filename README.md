@@ -55,6 +55,8 @@ recordings, replay buffers, checkpoints, `centerline.npy`, TensorBoard logs,
   - teleport/fast-travel jumps are re-anchored instead of misread as crashes
   - long GPU-stall ticks are ignored for impact-rate checks
   - slow uphill crawling no longer trips the stuck detector if position advances
+  - when automated recovery is exhausted, the run pauses for manual help instead
+    of crashing (the background learner keeps training on replay)
 - AutoDrive recovery now models the FH6 split behavior:
   - far off-road -> Fast Travel Warning / transfer prompt -> `A` confirms teleport
   - on-road but stuck -> no prompt -> AutoDrive drives back
@@ -266,7 +268,11 @@ drive-back mechanism.
   the Fast Travel Warning prompt without canceling live AutoDrive.
 - Smooth AutoDrive recoveries are replay demonstrations.
 - Teleport jumps are accepted for safety but excluded from learned dynamics.
+- If AutoDrive leaves the car upright on a drivable parallel road, that is accepted
+  instead of teleporting a perfectly drivable car.
 - Pause-menu Reset Car Position is only a last-resort fallback.
+- If every option is exhausted, the run pauses and waits for a drivable car rather
+  than crashing the training process.
 
 ## Configuration Highlights
 
