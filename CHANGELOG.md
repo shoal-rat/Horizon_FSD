@@ -30,7 +30,7 @@ python -m unittest discover -s tests -v
 python -m py_compile recovery.py recovery_demo.py forza_rl_env.py train_dreamer.py reset_test.py offline_pretrain_dreamer.py
 ```
 
-At publication time, the suite contains 52 tests.
+At publication time, the suite contains 55 tests.
 
 ### Notes
 

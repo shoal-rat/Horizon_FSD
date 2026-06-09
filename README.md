@@ -9,7 +9,7 @@
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows-2563eb?style=for-the-badge">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10--3.13-0f766e?style=for-the-badge">
   <img alt="mode" src="https://img.shields.io/badge/scope-Offline%20Solo-f59e0b?style=for-the-badge">
-  <img alt="tests" src="https://img.shields.io/badge/tests-52%20unit%20%2B%20stress-16a34a?style=for-the-badge">
+  <img alt="tests" src="https://img.shields.io/badge/tests-55%20unit%20%2B%20stress-16a34a?style=for-the-badge">
 </p>
 
 Horizon FSD is a Windows research stack for vision-based autonomous driving in
