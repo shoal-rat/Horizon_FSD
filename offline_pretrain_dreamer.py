@@ -99,12 +99,35 @@ def _load_checkpoint(agent: Dreamer, path: pathlib.Path) -> None:
         print(f"[checkpoint] loaded all {len(model_sd)} tensors")
 
 
+def _bc_step(agent, demo_dataset) -> float:
+    """One behavioral-cloning step: push the ACTOR toward the human demo action at the demo latents
+    (DreamerFD recipe). The world model is FROZEN here (it learns demos via its own loss); only the
+    actor moves. This is what makes the demos reach the POLICY instead of only the world model - the
+    fix for an agent that can't discover steering by RL alone, and never imitates the human's wheel."""
+    wm = agent._wm
+    actor = agent._task_behavior.actor
+    bc_obs = next(demo_dataset)
+    with torch.no_grad():                                 # latents from the (frozen) world model
+        data = wm.preprocess(bc_obs)
+        embed = wm.encoder(data)
+        post, _ = wm.dynamics.observe(embed, data["action"], data["is_first"])
+        feat = wm.dynamics.get_feat(post)
+    a_demo = torch.clamp(data["action"], -0.999, 0.999)   # fp16-safe at the tanh boundary
+    with tools.RequiresGrad(actor):
+        bc_loss = -actor(feat).log_prob(a_demo).mean()
+        agent._task_behavior._actor_opt(bc_loss, actor.parameters())
+    return float(bc_loss.detach().cpu())
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Offline Dreamer replay training; no FH6 env is created.")
     p.add_argument("--logdir", default=r"C:\Horizon_FSD\dreamer_logs\forza")
     p.add_argument("--configs", nargs="+", default=["forza"])
     p.add_argument("--updates", type=int, default=None,
                    help="Gradient updates to run; default uses config.pretrain.")
+    p.add_argument("--bc", type=int, default=1,
+                   help="Interleave a behavioral-cloning step (actor imitates the human demos) each "
+                        "update. 1=on (default), 0=off. Needs ws-* demo episodes in train_eps.")
     p.add_argument("--save-every", type=int, default=50)
     args, remaining = p.parse_known_args()
 
@@ -124,6 +147,9 @@ def main() -> int:
     step = count_steps(config.traindir)
     logger = tools.Logger(logdir, config.action_repeat * step)
     dataset = make_dataset(train_eps, config)
+    # demo-only stream (human recordings) for the behavioral-cloning step
+    demo_eps = {k: v for k, v in train_eps.items() if "ws-" in str(k)}
+    demo_dataset = make_dataset(demo_eps, config) if (args.bc and demo_eps) else None
     obs_space, act_space = _spaces(config)
     config.num_actions = act_space.shape[0]
 
@@ -134,6 +160,7 @@ def main() -> int:
     print(f" train_eps   : {config.traindir} ({len(train_eps)} episodes, ~{step} steps)")
     print(f" updates     : {updates}")
     print(f" device      : {config.device}")
+    print(f" BC (imitate demos): {'on, ' + str(len(demo_eps)) + ' demo eps' if demo_dataset else 'off'}")
     print(" FH6/env     : not created; safe to keep the game closed")
 
     agent = Dreamer(obs_space, act_space, config, logger, dataset).to(config.device)
@@ -141,14 +168,18 @@ def main() -> int:
     ckpt_path = logdir / "latest.pt"
     _load_checkpoint(agent, ckpt_path)
 
+    bc_loss = float("nan")
     for i in range(1, updates + 1):
         agent._safe_train()
+        if demo_dataset is not None:
+            bc_loss = _bc_step(agent, demo_dataset)
         if i == 1 or i == updates or (args.save_every and i % args.save_every == 0):
             with agent._metrics_lock:
                 reward_loss = agent._metrics.get("reward_loss", [float("nan")])[-1]
                 actor_loss = agent._metrics.get("actor_loss", [float("nan")])[-1]
             print(f"[offline] update {i:4d}/{updates}  "
-                  f"reward_loss={float(reward_loss):+.4f} actor_loss={float(actor_loss):+.4f}")
+                  f"reward_loss={float(reward_loss):+.4f} actor_loss={float(actor_loss):+.4f} "
+                  f"bc_loss={bc_loss:+.4f}")
             torch.save({
                 "agent_state_dict": agent.state_dict(),
                 "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),

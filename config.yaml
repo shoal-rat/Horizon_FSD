@@ -45,7 +45,9 @@ rl_reward:
   progress_max_step: 2.0
   progress_jump_guard: 5.0
   route_max_dist: 18.0      # == detector.offroute_dist: don't credit progress wider than the detector tolerates
-  center_w: 0.5             # dense lateral-centering penalty = the night-safe steering signal (telemetry-based)
+  align_w: 0.4              # reward moving ALONG the route (velocity.tangent) - the night-safe steering signal
+  align_min_speed: 1.5      # below this, velocity direction is too noisy to trust
+  cross_w: 0.3              # small lateral-distance penalty (pull to centre)
   boot_w: 0.3
   offroad_rumble: 0.15
   offroad_w: 2.0

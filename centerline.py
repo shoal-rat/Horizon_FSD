@@ -51,6 +51,29 @@ class Centerline:
             return float(s), float(lat), True
         return float(s), float(d[i]), False
 
+    def project_frame(self, x: float, z: float) -> tuple[float, float, float, float, bool]:
+        """Like project() but also returns the route's UNIT TANGENT and the SIGNED cross-track error
+        (right of the path positive, left negative). Returns (s, signed_cte, tan_x, tan_z, at_end);
+        |signed_cte| == project()'s lateral_distance. The tangent is in the SAME world (x, z) frame as
+        the car's velocity, so dot(velocity, tangent) is a sign-safe heading-alignment signal (no yaw
+        convention needed). Non-finite input fails safe: (nan, inf, 1, 0, False)."""
+        px, pz = float(x), float(z)
+        if not (math.isfinite(px) and math.isfinite(pz)):
+            return float("nan"), float("inf"), 1.0, 0.0, False
+        rel = np.array([px, pz]) - self._a
+        t_raw = (rel * self._ab).sum(1) / self._ab2
+        t = t_raw.clip(0.0, 1.0)
+        proj = self._a + t[:, None] * self._ab
+        d = np.hypot(proj[:, 0] - px, proj[:, 1] - pz)
+        i = int(d.argmin())
+        s = self.cum[i] + t[i] * self._seglen[i]
+        seglen = max(self._seglen[i], 1e-9)
+        tx, tz = self._ab[i, 0] / seglen, self._ab[i, 1] / seglen          # unit tangent
+        at_end = i == len(self._ab) - 1 and t_raw[i] > 1.0
+        rx, rz = (rel[i, 0], rel[i, 1]) if at_end else (px - proj[i, 0], pz - proj[i, 1])
+        signed_cte = tx * rz - tz * rx                                     # cross(tangent, offset): + = right
+        return float(s), float(signed_cte), float(tx), float(tz), at_end
+
     @classmethod
     def load(cls, path: str) -> "Centerline":
         return cls(np.load(path))
