@@ -48,8 +48,27 @@ DEFAULT_DATASET = {
     "autodrive_surface_rumble": 0.15,
 }
 
-_SCALAR_KEYS = ("frames", "actions", "speed", "accel", "surface_rumble",
+_SCALAR_KEYS = ("actions", "speed", "accel", "surface_rumble",
                 "tire_slip", "is_race_on", "distance")
+_OPTIONAL_KEYS = ("position",)
+
+
+class LazyJpegFrames:
+    """Sequence view over JPEG-encoded source frames (the new recording format): decodes one frame
+    at a time on access, so a multi-GB color session never has to fit in RAM decoded."""
+
+    def __init__(self, encoded: list) -> None:
+        self._enc = encoded
+
+    def __len__(self) -> int:
+        return len(self._enc)
+
+    def __getitem__(self, i):
+        import cv2
+        frame = cv2.imdecode(np.frombuffer(self._enc[i], dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError(f"corrupt JPEG frame at index {i}")
+        return frame                                   # BGR (H, W, 3)
 
 
 def load_session(session_dir: str) -> Optional[dict[str, Any]]:
@@ -57,13 +76,28 @@ def load_session(session_dir: str) -> Optional[dict[str, Any]]:
     if not shards:
         return None
     cat: dict[str, list] = {k: [] for k in _SCALAR_KEYS}
+    opt: dict[str, list] = {k: [] for k in _OPTIONAL_KEYS}
+    frames_legacy: list = []
+    frames_jpeg: list = []
     quality = "manual"
     for sh in shards:
-        z = np.load(sh)
+        z = np.load(sh, allow_pickle=True)             # pickle only for the jpeg object array
         for k in _SCALAR_KEYS:
             cat[k].append(z[k])
+        for k in _OPTIONAL_KEYS:
+            if k in z.files:
+                opt[k].append(z[k])
+        if "frames_jpeg" in z.files:
+            frames_jpeg.extend(list(z["frames_jpeg"]))
+        elif "frames" in z.files:
+            frames_legacy.append(z["frames"])
         quality = str(z["quality"])
     out: dict[str, Any] = {k: np.concatenate(cat[k], axis=0) for k in _SCALAR_KEYS}
+    for k, v in opt.items():
+        if v:
+            out[k] = np.concatenate(v, axis=0)
+    out["frames"] = (LazyJpegFrames(frames_jpeg) if frames_jpeg
+                     else np.concatenate(frames_legacy, axis=0))
     out["quality"] = quality
     return out
 

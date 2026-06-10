@@ -2,17 +2,24 @@
 record.py - Horizon FSD, Phase 2 [HUMAN-IN-THE-LOOP: you drive]
 
 Log synchronized (frame, telemetry, action) tuples at a fixed rate while you drive
-FH6 manually, into compressed .npz shards for behavioral cloning.
+FH6 manually, into compressed .npz shards.
 
 The ACTION label is read from the telemetry's own steer/throttle/brake fields, so
 each label is exactly what the car did (not what you think you pressed).
 
-Frames are stored already preprocessed (downscaled grayscale, per config.yaml), to
-keep shards small; dataset.py builds the frame stacks and filters bad frames.
+Frames are stored as 320x180 JPEG-encoded COLOR source frames (~21 MB/min): every
+downstream observation (64x64 gray today, 64x64 color after the flip, any future
+size) plus the racing-line cue and day/night classification are all REGENERABLE
+offline from the same recording - the session never goes stale when the obs design
+changes. Telemetry includes world position, so route-geometry obs backfill too.
 
-Examples (FH6 in offline Free Roam, Data Out ON):
-    .\\.venv\\Scripts\\python.exe record.py                       # record until Ctrl+C
-    .\\.venv\\Scripts\\python.exe record.py --duration 300        # ~5 min
+Use an ANALOG gamepad. Keyboard play records bang-bang full-lock steering, which
+teaches the policy the exact saturation collapse seen live - the recorder warns
+and aborts if it detects it (override with --allow-bang-bang for a reason).
+
+Examples (FH6 in offline Free Roam, chase cam, Data Out ON):
+    .\\.venv\\Scripts\\python.exe record.py --tag "day fwd laps"
+    .\\.venv\\Scripts\\python.exe record.py --duration 300 --tag "recovery cycles day"
     .\\.venv\\Scripts\\python.exe record.py --autodrive           # tag as low-quality (ANNA AutoDrive)
 """
 from __future__ import annotations
@@ -22,12 +29,18 @@ import json
 import os
 import time
 
+import cv2
 import numpy as np
 
 from capture import ScreenCapture
 from config import load_config
 from hitl import countdown
 from telemetry_receiver import TelemetryReceiver
+
+SOURCE_W, SOURCE_H = 320, 180        # 16:9 color source frames; obs are derived offline
+JPEG_QUALITY = 90
+BANG_BANG_CHECK_AT = 600             # samples before the keyboard (full-lock) check
+BANG_BANG_MAX_FRAC = 0.05
 
 
 def main() -> int:
@@ -38,6 +51,10 @@ def main() -> int:
     p.add_argument("--shard-size", type=int, default=1000, help="Samples per .npz shard.")
     p.add_argument("--autodrive", action="store_true",
                    help="Tag this session as low-quality ANNA AutoDrive data.")
+    p.add_argument("--tag", default="",
+                   help='Free-text session tag, e.g. "day fwd laps" / "night recovery" / "hairpins".')
+    p.add_argument("--allow-bang-bang", action="store_true",
+                   help="Skip the keyboard (full-lock steering) abort check.")
     p.add_argument("--include-nondriving", action="store_true",
                    help="Also record frames where IsRaceOn=0 (menus/paused). Default: skip them.")
     p.add_argument("--countdown", type=float, default=5.0,
@@ -52,8 +69,8 @@ def main() -> int:
         monitor_index=cap_cfg.get("monitor_index", 1),
         window_name=cap_cfg.get("window_name"),
         region=cap_cfg.get("region"),
-        img_size=(cap_cfg["img_height"], cap_cfg["img_width"]),
-        grayscale=cap_cfg.get("grayscale", True),
+        img_size=(SOURCE_H, SOURCE_W),   # we store SOURCE frames; obs are derived offline
+        grayscale=False,                 # color sources - gray obs are derivable, color isn't
     )
     rx = TelemetryReceiver(
         host=tel_cfg.get("host", "0.0.0.0"),
@@ -77,7 +94,7 @@ def main() -> int:
     countdown(args.countdown, "switch to FH6 and start driving")
 
     # buffers
-    keys = ("frames", "actions", "speed", "accel", "surface_rumble",
+    keys = ("frames_jpeg", "actions", "speed", "accel", "surface_rumble",
             "tire_slip", "is_race_on", "distance", "timestamp_ms", "position")
     buf: dict[str, list] = {k: [] for k in keys}
     shard_idx = 0
@@ -86,12 +103,14 @@ def main() -> int:
 
     def save_shard() -> None:
         nonlocal shard_idx
-        if not buf["frames"]:
+        if not buf["frames_jpeg"]:
             return
         path = os.path.join(session_dir, f"shard_{shard_idx:04d}.npz")
+        jpeg = np.empty(len(buf["frames_jpeg"]), dtype=object)   # variable-length encoded frames
+        jpeg[:] = buf["frames_jpeg"]
         np.savez_compressed(
             path,
-            frames=np.asarray(buf["frames"], dtype=np.uint8),
+            frames_jpeg=jpeg,
             actions=np.asarray(buf["actions"], dtype=np.float32),
             speed=np.asarray(buf["speed"], dtype=np.float32),
             accel=np.asarray(buf["accel"], dtype=np.float32),
@@ -100,10 +119,10 @@ def main() -> int:
             is_race_on=np.asarray(buf["is_race_on"], dtype=np.int8),
             distance=np.asarray(buf["distance"], dtype=np.float32),
             timestamp_ms=np.asarray(buf["timestamp_ms"], dtype=np.uint32),
-            position=np.asarray(buf["position"], dtype=np.float32),   # (N,3) world x,y,z for centerline
+            position=np.asarray(buf["position"], dtype=np.float32),   # (N,3) world x,y,z for centerline/route
             quality=quality,
         )
-        print(f"  [shard] {path}  ({len(buf['frames'])} samples)")
+        print(f"  [shard] {path}  ({len(buf['actions'])} samples)")
         for k in keys:
             buf[k].clear()
         shard_idx += 1
@@ -112,6 +131,7 @@ def main() -> int:
     t_start = time.perf_counter()
     t_end = (t_start + args.duration) if args.duration > 0 else float("inf")
     next_t = t_start
+    steer_hist: list[float] = []
     print(" Recording. Drive! Ctrl+C to stop.\n")
     try:
         while time.perf_counter() < t_end:
@@ -128,7 +148,12 @@ def main() -> int:
                 skipped += 1
                 continue
 
-            buf["frames"].append(capture.observation())
+            frame = capture.observation()              # (SOURCE_H, SOURCE_W, 3) BGR
+            ok, enc = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            if not ok:
+                skipped += 1
+                continue
+            buf["frames_jpeg"].append(enc.tobytes())
             buf["actions"].append([t.steer_norm, t.throttle, t.brake])
             buf["speed"].append(t.speed)
             buf["accel"].append([t.acceleration_x, t.acceleration_y, t.acceleration_z])
@@ -140,10 +165,20 @@ def main() -> int:
             buf["position"].append([t.position_x, t.position_y, t.position_z])
             total += 1
 
+            steer_hist.append(abs(t.steer_norm))
+            if (not args.allow_bang_bang and not args.autodrive
+                    and total == BANG_BANG_CHECK_AT):
+                frac = sum(1 for v in steer_hist if v > 0.99) / max(1, len(steer_hist))
+                if frac > BANG_BANG_MAX_FRAC:
+                    print(f"\n [!] ABORT: {frac:.0%} of steering is at FULL LOCK - keyboard play? "
+                          "Bang-bang demos teach the policy the exact saturation collapse seen live. "
+                          "Use an ANALOG gamepad (or --allow-bang-bang to override).")
+                    return 2
+
             if total % int(args.hz) == 0:
                 print(f"  {total:6d} samples  speed={t.speed_kmh:6.1f} km/h  "
                       f"steer={t.steer_norm:+.2f} throttle={t.throttle:.2f} brake={t.brake:.2f}")
-            if len(buf["frames"]) >= args.shard_size:
+            if len(buf["frames_jpeg"]) >= args.shard_size:
                 save_shard()
     except KeyboardInterrupt:
         print("\n stopping...")
@@ -155,10 +190,11 @@ def main() -> int:
     elapsed = time.perf_counter() - t_start
     meta = {
         "quality": quality,
+        "tag": args.tag,
         "session": session,
         "hz": args.hz,
-        "img_size": [cap_cfg["img_height"], cap_cfg["img_width"]],
-        "grayscale": bool(cap_cfg.get("grayscale", True)),
+        "frame_format": f"jpeg_bgr_{SOURCE_W}x{SOURCE_H}_q{JPEG_QUALITY}",
+        "cam": "chase",                  # racing_line.py's ROI is calibrated for the chase cam
         "samples": total,
         "skipped": skipped,
         "shards": shard_idx,

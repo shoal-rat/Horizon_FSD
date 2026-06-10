@@ -17,12 +17,14 @@ from typing import Optional
 import numpy as np
 
 from action_utils import physical_to_model_action
+from centerline import ROUTE_DIM
 
 
 @dataclass
 class RecoveryDemoConfig:
     enabled: bool = False
-    out_dir: str = r"C:\Horizon_FSD\dreamer_logs\forza\train_eps"
+    out_dir: str = r"C:\Horizon_FSD\dreamer_logs\forza\recovery_eps"   # sibling of train_eps: purges
+    #                                                                    of train_eps never sweep demos
     min_len: int = 16
     max_len: int = 1200
     sample_hz: float = 10.0
@@ -161,6 +163,9 @@ class RecoveryDemoRecorder:
             "image": image,
             "speed": speed,
             "line": line,
+            # route features unavailable here (the recorder keeps no centerline reference);
+            # all-zeros = "route unknown", same convention as legacy demos.
+            "route": np.zeros((length, ROUTE_DIM), dtype=np.float32),
             "action": action,
             "reward": reward,
             "is_first": is_first,

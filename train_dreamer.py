@@ -7,7 +7,8 @@ game. Checkpoints + resumes automatically from --logdir (re-run to continue).
 
 Before running:
   * One-time: build the warm-start replay -> `python make_warmstart.py --logdir <logdir>`
-  * FH6: offline Solo, damage None/Cosmetic (rewind), BUMPER cam, parked on a road, focused.
+  * FH6: offline Solo, damage None/Cosmetic, CHASE cam (racing_line.py's ROI is calibrated
+    for it, and the demos were recorded with it), parked on a road, focused.
   * The agent WILL drive the car (badly at first) and auto-reset on crashes.
 
 Run:
@@ -61,11 +62,35 @@ def main() -> int:
     print("=" * 74)
     print(" Horizon FSD - DreamerV3 training")
     print("=" * 74)
-    print(" FH6: offline Solo, damage None/Cosmetic, BUMPER cam, on a road, FOCUSED.")
+    print(" FH6: offline Solo, damage None/Cosmetic, CHASE cam, on a road, FOCUSED.")
     print(" The agent will drive (badly at first) and auto-reset on crashes. Ctrl+C to stop;")
     print(" re-run with the same --logdir to resume.")
     print(f" logdir: {args.logdir}")
     countdown(args.countdown, "switch to FH6 - the agent is about to take the wheel")
+
+    # PROVENANCE: record exactly which checkpoint this run starts from, so "the BC checkpoint never
+    # actually drove live" can never again go unnoticed (a whole run's conclusions were once founded
+    # on a checkpoint that finished pretraining AFTER the run ended).
+    ckpt = os.path.join(args.logdir, "latest.pt")
+    prov = {"t": __import__("time").time(), "config": args.config, "logdir": args.logdir}
+    if os.path.exists(ckpt):
+        import hashlib
+        with open(ckpt, "rb") as fh:
+            head = fh.read(1 << 20)                  # 1MB head-hash: cheap, changes with any retrain
+        prov.update(ckpt_mtime=os.path.getmtime(ckpt), ckpt_head_sha=hashlib.sha1(head).hexdigest()[:12])
+        print(f" checkpoint : {ckpt}  (modified "
+              f"{__import__('time').strftime('%Y-%m-%d %H:%M:%S', __import__('time').localtime(os.path.getmtime(ckpt)))}, "
+              f"id {prov['ckpt_head_sha']})")
+    else:
+        prov["ckpt_head_sha"] = None
+        print(" checkpoint : NONE (fresh start)")
+    try:
+        os.makedirs(args.logdir, exist_ok=True)
+        with open(os.path.join(args.logdir, "provenance.jsonl"), "a", encoding="utf-8") as fh:
+            import json
+            fh.write(json.dumps(prov) + "\n")
+    except OSError:
+        pass
 
     cmd = [sys.executable, "dreamer.py", "--configs", args.config, "--logdir", args.logdir, *args.extra]
     env = dict(os.environ, HORIZON_FSD_DIR=HFSD_DIR, HORIZON_FSD_LOGDIR=args.logdir)

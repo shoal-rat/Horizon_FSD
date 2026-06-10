@@ -16,13 +16,17 @@ ladder (rewind -> reset-to-road) to put the car back on the road.
 """
 from __future__ import annotations
 
+import json
 import time
 import os
+from collections import deque
 
 import gym
 import numpy as np
 
-from action_utils import exclusive_pedals, model_to_physical_action
+from action_utils import (apply_steer_limit, exclusive_pedals, model_to_physical_action,
+                          physical_to_model_action)
+from centerline import ROUTE_DIM, route_features
 from capture import ScreenCapture
 from config import load_config
 from gamepad import ForzaGamepad
@@ -59,12 +63,17 @@ class ForzaDriveEnv:
         self.reward_range = [-np.inf, np.inf]
 
         cap, tel = cfg["capture"], cfg["telemetry"]
+        # Color is a CONFIG SWITCH (capture.grayscale in config.yaml). Keep GRAY until 2-3 COLOR demo
+        # sessions exist: a replicated-gray demo corpus next to color live frames is a perfect
+        # demo/live discriminator handed to the reward head (see docs). Flip + rebuild ws together.
+        self.grayscale = bool(cap.get("grayscale", True))
+        self.channels = 1 if self.grayscale else 3
         self.capture = ScreenCapture(
             monitor_index=cap.get("monitor_index", 1),
             window_name=cap.get("window_name"),
             region=cap.get("region"),
             img_size=self.size,
-            grayscale=True,
+            grayscale=self.grayscale,
         )
         self.rx = TelemetryReceiver(host=tel.get("host", "0.0.0.0"), port=int(tel.get("port", 9999)))
         self.rx.start()
@@ -75,7 +84,9 @@ class ForzaDriveEnv:
         self.line_reader = RacingLineReader()     # reads FH's driving line from the colour frame
         demo_cfg_dict = dict(cfg.get("recovery_demos", {}))
         if os.environ.get("HORIZON_FSD_LOGDIR"):
-            demo_cfg_dict["out_dir"] = os.path.join(os.environ["HORIZON_FSD_LOGDIR"], "train_eps")
+            # recovery demos live in a SIBLING dir so train_eps cleanup/purges never sweep them;
+            # the trainer's load_new_episodes scans both.
+            demo_cfg_dict["out_dir"] = os.path.join(os.environ["HORIZON_FSD_LOGDIR"], "recovery_eps")
         demo_cfg = RecoveryDemoConfig(**_cfg_kwargs(RecoveryDemoConfig, demo_cfg_dict))
         # Recovery demos must use the SAME reward branch as the warm-start episodes (speed fallback,
         # since recordings carry no position) so the OFFLINE replay holds ONE consistent reward scale.
@@ -102,6 +113,12 @@ class ForzaDriveEnv:
         self.high_speed_steer_limit = float(safety.get("high_speed_steer_limit", 0.35))
         self.high_speed_threshold = float(safety.get("high_speed_threshold", 15.0))
         self.grace_s = float(safety.get("recovery_grace_s", 1.5))  # skip detection just after a reset
+        self.runway_steps = int(safety.get("runway_steps", 20))    # decision-steps of runway per episode
+        route_cfg = cfg.get("rl_route", {})
+        self._route_cl = self.reward_fn._centerline                # same reference path as the reward
+        self.route_max_dist = float(self.reward_fn.cfg.route_max_dist)
+        self.route_spacing = float(route_cfg.get("lookahead_spacing_m", 8.0))
+        self.route_min_speed = float(route_cfg.get("heading_min_speed", 2.0))
         # When automated recovery is exhausted: False (default) = PAUSE and wait for the car to become
         # drivable (don't kill an overnight run); True = raise and stop.
         self.crash_on_unrecoverable = bool(safety.get("crash_on_unrecoverable", False))
@@ -119,15 +136,24 @@ class ForzaDriveEnv:
         self._tick_deadline = time.perf_counter()
         self._recovered_at = 0.0                       # perf_counter of the last reset (post-recovery grace)
         self._overruns = 0
+        self._episode_steps = 0
+        self._episode_return = 0.0
+        self._episode_steer_sum = 0.0
+        self._recent_mean_steers: deque = deque(maxlen=20)   # collapse alarm window
+        logdir = os.environ.get("HORIZON_FSD_LOGDIR", "")
+        self._reasons_path = os.path.join(logdir, "reasons.jsonl") if logdir else None
 
     # ---- spaces -----------------------------------------------------------
     @property
     def observation_space(self):
         return gym.spaces.Dict({
-            "image": gym.spaces.Box(0, 255, self.size + (1,), dtype=np.uint8),
+            "image": gym.spaces.Box(0, 255, self.size + (self.channels,), dtype=np.uint8),
             "speed": gym.spaces.Box(0.0, np.inf, (1,), dtype=np.float32),
             # racing line: [cue (-1 brake .. +1 accelerate), lateral offset, confidence]
             "line": gym.spaces.Box(-1.0, 1.0, (3,), dtype=np.float32),
+            # route geometry (telemetry-based, light-invariant): signed cross-track, heading error,
+            # prev applied action, and a lookahead preview of the upcoming road - see route_features.
+            "route": gym.spaces.Box(-1.0, 1.0, (ROUTE_DIM,), dtype=np.float32),
         })
 
     @property
@@ -142,22 +168,32 @@ class ForzaDriveEnv:
 
     # ---- helpers ----------------------------------------------------------
     def _capture(self) -> tuple[np.ndarray, LineReading]:
-        """Grab ONE colour frame; return (grayscale obs image (H,W,1), racing-line reading).
-        Reading the line from the same grab keeps the obs image and the line in sync and
-        avoids a second capture."""
+        """Grab ONE colour frame; return (obs image (H,W,1) gray or (H,W,3) color per config,
+        racing-line reading). Reading the line from the same grab keeps the obs image and the
+        line in sync and avoids a second capture."""
         raw = self.capture.grab()                 # full-res BGR
         line = self.line_reader.read(raw)
-        img = self.capture.preprocess(raw)        # (H, W) uint8 grayscale
+        img = self.capture.preprocess(raw)        # (H, W) gray or (H, W, 3) BGR per config
         if img.ndim == 2:
             img = img[:, :, None]                 # (H, W, 1)
         return np.ascontiguousarray(img, dtype=np.uint8), line
 
     def _obs(self, t, image: np.ndarray, line: LineReading,
              is_first: bool, is_terminal: bool) -> dict:
+        prev_a = physical_to_model_action(self._prev_applied_action)
+        if t is not None:
+            route = route_features(self._route_cl, t.position_x, t.position_z,
+                                   getattr(t, "velocity_x", 0.0), getattr(t, "velocity_z", 0.0),
+                                   max(0.0, t.speed), prev_a,
+                                   max_dist=self.route_max_dist, spacing=self.route_spacing,
+                                   min_speed=self.route_min_speed)
+        else:
+            route = route_features(None, float("nan"), float("nan"), 0.0, 0.0, 0.0, prev_a)
         return {
             "image": image,
             "speed": np.array([t.speed if t is not None else 0.0], dtype=np.float32),
             "line": np.array([line.cue, line.offset, line.confidence], dtype=np.float32),
+            "route": route,
             "is_first": is_first,
             "is_terminal": is_terminal,
         }
@@ -177,13 +213,8 @@ class ForzaDriveEnv:
     def _limit_steer(self, steer: float) -> float:
         t = self.rx.latest()
         speed = max(0.0, float(t.speed)) if t is not None else 0.0
-        if self.high_speed_threshold <= 0.0:
-            limit = self.steer_limit
-        else:
-            a = min(1.0, speed / self.high_speed_threshold)
-            limit = (1.0 - a) * self.steer_limit + a * self.high_speed_steer_limit
-        limit = max(0.05, min(1.0, limit))
-        return float(np.clip(steer, -limit, limit))
+        return apply_steer_limit(steer, speed, self.steer_limit,
+                                 self.high_speed_steer_limit, self.high_speed_threshold)
 
     # ---- gym API ----------------------------------------------------------
     # detector reasons that are just the post-recovery dead-stop settling (suppressed during grace);
@@ -191,10 +222,38 @@ class ForzaDriveEnv:
     # recovery FAILED and should re-trigger, not be masked.
     _GRACE_SUPPRESSED = ("stuck", "noprogress", "offroute")
 
+    def _log_episode(self, reason: str) -> None:
+        """Append the auditable per-episode record (93% of episodes once ended 'crash-flavored' with
+        no on-disk reason distribution) and run the COLLAPSE ALARM: |mean applied steer| persistently
+        high across recent episodes = the constant-turn failure mode; alert immediately, not after an
+        overnight run is wasted."""
+        n = max(1, self._episode_steps)
+        mean_steer = self._episode_steer_sum / n
+        self._recent_mean_steers.append(mean_steer)
+        if self._reasons_path:
+            try:
+                with open(self._reasons_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "t": time.time(), "reason": reason, "length": self._episode_steps,
+                        "return": round(self._episode_return, 2), "mean_steer": round(mean_steer, 3),
+                        "overruns": self._overruns,
+                    }) + "\n")
+            except OSError:
+                pass
+        if len(self._recent_mean_steers) >= 10:
+            m = float(np.mean(self._recent_mean_steers))
+            if abs(m) > 0.4:
+                print(f"[forza-env] !! COLLAPSE ALARM: mean applied steer {m:+.2f} over the last "
+                      f"{len(self._recent_mean_steers)} episodes - the actor is locking the wheel. "
+                      "Stop and re-pretrain rather than burning an overnight run.\a")
+        self._episode_return = 0.0
+        self._episode_steer_sum = 0.0
+
     def _benign_terminal(self, reason):
         """End the episode WITHOUT a crash penalty and without driving the agent's action - for the
         not-a-crash halts (paused menu, frozen render frame). reset() waits for live driving to
         resume for these reasons rather than running the teleport ladder."""
+        self._log_episode(reason)
         self.gamepad.reset()
         self._pending_reason = reason
         self._prev_t = None
@@ -204,7 +263,8 @@ class ForzaDriveEnv:
         obs = self._obs(self.rx.latest(), image, line, is_first=False, is_terminal=True)
         print(f"[forza-env] episode halted (benign): {reason}")
         return obs, 0.0, True, {"crash_reason": reason, "speed_kmh": float(obs["speed"][0] * 3.6),
-                                "applied_steer": 0.0, "applied_throttle": 0.0, "applied_brake": 0.0}
+                                "applied_steer": 0.0, "applied_throttle": 0.0, "applied_brake": 0.0,
+                                "applied_action_model": physical_to_model_action([0.0, 0.0, 0.0])}
 
     def step(self, action):
         # Not-a-crash halts, checked BEFORE applying the agent's action:
@@ -232,9 +292,14 @@ class ForzaDriveEnv:
         reward = 0.0
         reason = None
         got_telemetry = False
-        # post-recovery grace: a freshly-recovered car is handed back stopped; don't let that dead-stop
-        # immediately re-trip stuck/noprogress while the agent is still taking the wheel.
-        in_grace = (time.perf_counter() - self._recovered_at) < self.grace_s
+        self._episode_steps += 1
+        # post-recovery grace + episode RUNWAY (tmrl pattern): a freshly-recovered car is handed back
+        # stopped, and an agent needs a couple of seconds of consecutive on-road steps to act before a
+        # detector can kill the episode - otherwise the buffer is wall-to-wall 8-15-step episode-starts
+        # (median was 27 steps). flipped/offroad/impact stay ACTIVE; the wedge-grind window (~8 s) is
+        # longer than the runway, so this cannot reopen the -4037 wedge hole.
+        in_grace = ((time.perf_counter() - self._recovered_at) < self.grace_s
+                    or self._episode_steps <= self.runway_steps)
         for _ in range(self.action_repeat):
             self._sleep_to_tick()
             t = self.rx.latest(max_age=self.stale_after)   # None if the stream is stale (alt-tab/hitch)
@@ -259,6 +324,7 @@ class ForzaDriveEnv:
         reward += self.reward_fn.cfg.line_follow_w * pl.confidence * pl.cue * (throttle - brake)
 
         done = reason is not None
+        self._episode_steer_sum += steer
         if done:
             self._pending_reason = reason
             # route_complete (reached the end of the route) and telemetry_lost (a stream hitch) are NOT
@@ -270,6 +336,9 @@ class ForzaDriveEnv:
             print(f"[forza-env] episode done: {reason} "
                   f"speed={speed_kmh:.1f}km/h steer={steer:+.2f} "
                   f"throttle={throttle:.2f} brake={brake:.2f}")
+        self._episode_return += float(reward)
+        if done:
+            self._log_episode(reason)
         image, line = self._capture()
         self._prev_line = line
         obs = self._obs(self.rx.latest(), image, line, is_first=False, is_terminal=done)
@@ -279,6 +348,12 @@ class ForzaDriveEnv:
             "applied_steer": steer,
             "applied_throttle": throttle,
             "applied_brake": brake,
+            # The action the car ACTUALLY executed (post steer-clamp + exclusive pedals), in model
+            # coordinates. The trainer caches THIS into replay, not the raw policy sample: 73.5% of
+            # raw samples saturated beyond the clamp and 36.7% co-pressed both pedals, so the world
+            # model was learning dynamics for actions that never happened - which made saturated
+            # steering free in imagination (a direct mechanism for the steering collapse).
+            "applied_action_model": physical_to_model_action([steer, throttle, brake]),
         }
         return obs, float(reward), done, info
 
@@ -348,6 +423,7 @@ class ForzaDriveEnv:
                                "port correct, and the game focused?")
         self._tick_deadline = time.perf_counter()
         self._recovered_at = time.perf_counter()   # start the post-recovery grace window
+        self._episode_steps = 0                    # start the episode runway
         image, line = self._capture()
         self._prev_line = line
         return self._obs(self.rx.latest(), image, line, is_first=True, is_terminal=False)

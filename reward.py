@@ -97,6 +97,9 @@ class DriveRewardConfig:
     #                               negative when going the wrong way. Sign-safe (both vectors world-frame).
     align_min_speed: float = 1.5  # below this the velocity direction is too noisy to trust -> no alignment
     cross_w: float = 0.3          # small magnitude penalty for lateral distance off the line (pull to centre)
+    penalty_cap: float = 1.5      # per-step cap on the unbounded telemetry penalties (offroad rumble, slip):
+    #                               keeps every per-step penalty well below the terminal crash_penalty so
+    #                               "crash fast" can never be cheaper than "keep driving badly"
     boot_w: float = 0.3           # BOOTSTRAP: small dense forward-speed bonus (on-road) so a fresh
     #                               actor gets a gradient toward driving forward BEFORE it can make
     #                               clean centerline progress (which is otherwise too sparse to learn
@@ -197,8 +200,12 @@ class DriveReward:
                 cos_head = (vx * tan_x + vz * tan_z) / max(sp, 1e-6)
                 align = c.align_w * max(-1.0, min(1.0, cos_head))
             cross = c.cross_w * min(1.0, abs(signed_cte) / max(1e-6, c.route_max_dist))
-        offroad = c.offroad_w * t.mean_surface_rumble
-        slip = c.slip_w * max(0.0, t.mean_tire_slip_ratio - c.slip_deadband)
+        # CAP the per-step penalties: rumble/slip are unbounded game telemetry, and uncapped they hit
+        # -32/step (worth six crash penalties) - making "crash fast" cheaper than "grind on", and
+        # stretching the reward scale so far that the reward head treated demos (+1.3/step) and live
+        # data as different worlds. The terminal crash penalty must stay the dominant negative.
+        offroad = min(c.offroad_w * t.mean_surface_rumble, c.penalty_cap)
+        slip = min(c.slip_w * max(0.0, t.mean_tire_slip_ratio - c.slip_deadband), c.penalty_cap)
         jerk = 0.0
         if action is not None and prev_action is not None:
             jerk = c.jerk_w * float((float(action[0]) - float(prev_action[0])) ** 2)

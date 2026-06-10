@@ -20,11 +20,30 @@ class FakeTelemetry:
 
 
 class TestCrashDetector(unittest.TestCase):
-    def test_on_road_idle_does_not_become_stuck_without_throttle(self):
-        detector = CrashDetector(DetectorConfig(stuck_seconds=1.0, stuck_hard_seconds=2.0, centerline_path=""))
+    def test_on_road_idle_without_throttle_only_hard_stucks(self):
+        # idle with no throttle is not "trying and failing" (no stuck within stuck_seconds), but the
+        # hard net still fires after stuck_hard_seconds REGARDLESS of surface (no rumble gate: a car
+        # motionless on tarmac for that long is just as wedged/degenerate as one in the grass).
+        detector = CrashDetector(DetectorConfig(stuck_seconds=1.0, stuck_hard_seconds=20.0, centerline_path=""))
         t = FakeTelemetry(speed=0.0, mean_surface_rumble=0.0)
         self.assertIsNone(detector.update(t, 0.0, throttle_cmd=0.0, brake_cmd=0.0))
         self.assertIsNone(detector.update(t, 5.0, throttle_cmd=0.0, brake_cmd=0.0))
+        self.assertEqual(detector.update(t, 21.0, throttle_cmd=0.0, brake_cmd=0.0), "stuck")
+
+    def test_wedge_grind_is_caught_by_the_sliding_window(self):
+        # the -4037 hole: 87% throttle, creeping 0.22 m/s - evaded the fixed-anchor stuck (drifts past
+        # 1 m eventually), rumble-gated hard_stuck (on-road), and noprogress (speed<3 exempt). The
+        # sliding-window grind check must catch it within ~grind_seconds.
+        detector = CrashDetector(DetectorConfig(centerline_path="", stuck_seconds=1.5,
+                                                grind_seconds=8.0, grind_displacement_m=3.0))
+        reason, x = None, 0.0
+        for i in range(220):                              # 11 s at 0.05 s ticks, 0.22 m/s creep
+            reason = detector.update(FakeTelemetry(speed=2.5, position_x=x), i * 0.05,
+                                     throttle_cmd=0.87, brake_cmd=0.0)
+            x += 0.22 * 0.05
+            if reason:
+                break
+        self.assertEqual(reason, "stuck")
 
     def test_throttle_against_obstacle_becomes_stuck(self):
         detector = CrashDetector(DetectorConfig(stuck_seconds=1.0, centerline_path=""))

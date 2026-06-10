@@ -87,7 +87,9 @@ def main() -> int:
         import glob
         eps_dir = os.path.join(args.logdir, "train_eps")
         stale = (glob.glob(os.path.join(eps_dir, "ws-*.npz"))
-                 + glob.glob(os.path.join(eps_dir, "recovery-*.npz")))
+                 + glob.glob(os.path.join(eps_dir, "wsx-*.npz"))
+                 + glob.glob(os.path.join(eps_dir, "recovery-*.npz"))
+                 + glob.glob(os.path.join(args.logdir, "recovery_eps", "recovery-*.npz")))
         for f in stale:
             try:
                 os.remove(f)

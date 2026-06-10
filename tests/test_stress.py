@@ -175,6 +175,46 @@ class TestDetectorScenarios(unittest.TestCase):
         self.assertEqual(reason, "stuck")
 
 
+class TestRouteFeatures(unittest.TestCase):
+    def setUp(self):
+        from centerline import route_features, ROUTE_DIM
+        self.rf, self.DIM = route_features, ROUTE_DIM
+        self.cl = straight_centerline(31, 10.0)          # 300 m straight along +x
+
+    def test_signed_cte_and_heading(self):
+        r = self.rf(self.cl, 50.0, 3.0, 10.0, 0.0, 10.0, [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(r[0], 3.0 / 18.0, places=3)   # right of line -> positive
+        self.assertAlmostEqual(r[2], 1.0, places=3)          # moving along the route
+        self.assertEqual(r[3], 1.0)                          # heading valid
+        l = self.rf(self.cl, 50.0, -3.0, 10.0, 0.0, 10.0, [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(l[0], -3.0 / 18.0, places=3)  # left -> negative
+
+    def test_heading_gated_at_rest(self):
+        r = self.rf(self.cl, 50.0, 3.0, 0.0, 0.0, 0.0, [0.0, 0.0, 0.0])
+        self.assertEqual(r[3], 0.0)                          # invalid below the speed gate
+        self.assertEqual(r[1], 0.0)
+        self.assertAlmostEqual(r[0], 3.0 / 18.0, places=3)   # cte still usable
+
+    def test_lookahead_sees_a_bend(self):
+        # an L-shaped route: 100 m along +x then along +z; standing early, the lateral lookahead
+        # must reveal the upcoming bend (nonzero lat in the far points)
+        pts = np.concatenate([np.stack([np.arange(11) * 10.0, np.zeros(11)], 1),
+                              np.stack([np.full(10, 100.0), np.arange(1, 11) * 10.0], 1)])
+        cl = Centerline(pts)
+        r = self.rf(cl, 40.0, 0.0, 10.0, 0.0, 10.0, [0.0, 0.0, 0.0])
+        lat = r[8::2]
+        self.assertAlmostEqual(lat[0], 0.0, places=2)        # near points: straight
+        self.assertGreater(abs(lat[-1]), 0.1)                # far points: the bend is visible
+
+    def test_no_centerline_is_all_zero_except_prev_action(self):
+        r = self.rf(None, 1.0, 1.0, 5.0, 0.0, 5.0, [0.5, -1.0, -1.0])
+        self.assertEqual(list(np.nonzero(r)[0]), [4, 5, 6])
+
+    def test_wrong_way_reads_negative_cos(self):
+        r = self.rf(self.cl, 50.0, 0.0, -10.0, 0.0, 10.0, [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(r[2], -1.0, places=3)         # driving against the route
+
+
 class TestTelemetryPacket(unittest.TestCase):
     def test_valid_zero_packet_parses(self):
         ft.ForzaTelemetry.from_bytes(bytes(bytearray(324)))   # all-finite zeros

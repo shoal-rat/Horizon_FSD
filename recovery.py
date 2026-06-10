@@ -35,6 +35,7 @@ import logging
 import math
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -79,6 +80,12 @@ class DetectorConfig:
     #                                 teleport, not driving -> suppress offroute/impact/noprogress, re-anchor
     stuck_displacement_m: float = 1.0  # "stuck" also requires near-zero WORLD displacement, so a slow uphill
     #                                    grind that is still crawling forward isn't mistaken for wedged
+    grind_seconds: float = 8.0      # WEDGE-GRIND catch-all: throttle applied but the car covered less than
+    grind_displacement_m: float = 3.0  # grind_displacement_m of world distance in the last grind_seconds, at
+    #                                    sub-noprogress speed -> stuck. Closes the hole where a wedged car
+    #                                    creeping at ~0.2-3 m/s evaded stuck (fixed anchor), hard_stuck
+    #                                    (rumble-gated) and noprogress (speed>=3 only) for 600 steps,
+    #                                    farming a -4037 return into the buffer.
 
 
 class CrashDetector:
@@ -109,7 +116,6 @@ class CrashDetector:
     def reset(self) -> None:
         self._flip_since: Optional[float] = None
         self._slow_since: Optional[float] = None
-        self._slow_pos: Optional[tuple] = None
         self._offroad_since: Optional[float] = None
         self._prev_speed: Optional[float] = None
         self._prev_t_wall: Optional[float] = None
@@ -118,6 +124,32 @@ class CrashDetector:
         self._offroute_since: Optional[float] = None
         self._best_arc: Optional[float] = None
         self._arc_since: Optional[float] = None
+        self._pos_hist: deque = deque()        # (time, pos) history for sliding-window displacement
+
+    def _track_position(self, now: float, pos: Optional[tuple]) -> None:
+        """Append to the sliding position history (pruned to the longest window we test against)."""
+        if pos is None:
+            return
+        self._pos_hist.append((now, pos))
+        horizon = max(self.cfg.grind_seconds, self.cfg.stuck_seconds) + 2.0
+        while self._pos_hist and self._pos_hist[0][0] < now - horizon:
+            self._pos_hist.popleft()
+
+    def _window_displacement(self, now: float, pos: Optional[tuple], window: float) -> Optional[float]:
+        """World distance covered over the LAST `window` seconds, or None until enough history exists.
+        A SLIDING window, not a fixed anchor: a wedged car creeping at 0.2 m/s drifts past a fixed
+        anchor's threshold eventually, but never covers real distance in any recent window."""
+        if pos is None:
+            return None
+        anchor = None
+        for ts, p in self._pos_hist:           # newest sample that is at least `window` old
+            if ts <= now - window:
+                anchor = p
+            else:
+                break
+        if anchor is None:
+            return None
+        return math.dist(pos, anchor)
 
     def update(self, t: ForzaTelemetry, now: float,
                throttle_cmd: float = 1.0, brake_cmd: float = 0.0) -> Optional[str]:
@@ -139,10 +171,14 @@ class CrashDetector:
         self._prev_pos = pos
         if teleport:
             self._prev_speed = t.speed
-            self._slow_since = self._slow_pos = self._throttle_last = None
+            self._slow_since = self._throttle_last = None
             self._offroute_since = self._arc_since = self._flip_since = self._offroad_since = None
             self._best_arc = None              # arc is discontinuous after a teleport -> re-anchor
+            self._pos_hist.clear()
             return None
+        self._track_position(now, pos)
+        win_disp = self._window_displacement(now, pos, c.stuck_seconds)
+        grind_disp = self._window_displacement(now, pos, c.grind_seconds)
 
         # impact: a sudden speed collapse = collision. SKIP on an over-running tick (a stall's long dt
         # would read normal braking over the gap as a crash, teaching the agent that braking is fatal);
@@ -162,36 +198,35 @@ class CrashDetector:
         else:
             self._flip_since = None
 
-        # stuck = the agent is TRYING to accelerate but the car won't move, for a
-        # sustained window. The window is SPEED-based (so a momentary throttle dip
-        # doesn't reset it), and we just require that throttle was applied at some
-        # point while slow - i.e. "accelerator pressed AND speed ~0".
+        # remember WHEN throttle was last applied (not just that it ever was): a single stale tap
+        # shouldn't latch "stuck" forever once the agent legitimately brakes/holds.
+        if throttle_cmd > c.stuck_throttle_min and brake_cmd < c.stuck_brake_max:
+            self._throttle_last = now
+        trying = (self._throttle_last is not None
+                  and now - self._throttle_last <= c.stuck_throttle_grace)
+
+        # stuck = the agent is TRYING to accelerate but the car isn't moving through the WORLD, for a
+        # sustained window. not_moving uses a SLIDING window (displacement over the last stuck_seconds),
+        # not a fixed anchor - a wedged car creeping at 0.2 m/s eventually drifts past any fixed anchor
+        # but never covers distance in a recent window. hard_stuck is NOT rumble-gated: a car wedged
+        # against a wall ON the road is just as stuck as one in the grass.
         if t.speed < c.stuck_speed:
             if self._slow_since is None:
                 self._slow_since = now
-                self._slow_pos = pos
-            # remember WHEN throttle was last applied (not just that it ever was): a single stale tap
-            # shouldn't latch "stuck" forever once the agent legitimately brakes/holds.
-            if throttle_cmd > c.stuck_throttle_min and brake_cmd < c.stuck_brake_max:
-                self._throttle_last = now
             elapsed = now - self._slow_since
-            trying = (self._throttle_last is not None
-                      and now - self._throttle_last <= c.stuck_throttle_grace)
-            # ...and the car is genuinely NOT moving through the world: a slow uphill crawl that still
-            # covers ground isn't "stuck". Falls back to speed-only when position is unavailable.
-            not_moving = (pos is None or self._slow_pos is None
-                          or math.dist(pos, self._slow_pos) < c.stuck_displacement_m)
-            hard_stuck = (
-                c.stuck_hard_seconds > 0.0
-                and t.mean_surface_rumble > c.offroad_rumble
-                and elapsed > c.stuck_hard_seconds
-            )
+            not_moving = win_disp is None or win_disp < c.stuck_displacement_m
+            hard_stuck = c.stuck_hard_seconds > 0.0 and elapsed > c.stuck_hard_seconds
             if (trying and not_moving and elapsed > c.stuck_seconds) or hard_stuck:
                 return "stuck"
         else:
             self._slow_since = None
-            self._slow_pos = None
-            self._throttle_last = None
+
+        # wedge-grind catch-all: throttle applied but almost no world distance covered over the longer
+        # grind window, below noprogress speed (which exempts <3 m/s). Catches the 0.2-3 m/s grind that
+        # evaded stuck/hard_stuck/noprogress for 600 steps and farmed -4037 return into the buffer.
+        if (trying and t.speed < c.noprogress_speed and grind_disp is not None
+                and grind_disp < c.grind_displacement_m):
+            return "stuck"
 
         # off-road: on a rough surface (grass/snow), AT ANY SPEED, for a short window. The old
         # speed<10 gate let the agent drive fast off-road forever without ever being caught.

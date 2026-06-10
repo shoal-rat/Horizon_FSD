@@ -48,6 +48,11 @@ rl_reward:
   align_w: 0.4              # reward moving ALONG the route (velocity.tangent) - the night-safe steering signal
   align_min_speed: 1.5      # below this, velocity direction is too noisy to trust
   cross_w: 0.3              # small lateral-distance penalty (pull to centre)
+  penalty_cap: 1.5          # per-step cap on offroad/slip penalties (crash penalty stays dominant)
+
+rl_route:                   # route-geometry obs (light-invariant path preview, GT-Sophy style)
+  lookahead_spacing_m: 8.0  # arc spacing of the 10 lookahead points (80 m preview)
+  heading_min_speed: 2.0    # below this, velocity direction is noise -> heading invalid (flag 0)
   boot_w: 0.3
   offroad_rumble: 0.15
   offroad_w: 2.0
@@ -74,6 +79,8 @@ rl_safety:
   high_speed_threshold: 15.0
   recovery_grace_s: 1.5    # after a reset, skip crash detection this long so the dead-stop handoff
   #                          doesn't immediately re-trip stuck/noprogress while the agent takes over
+  runway_steps: 20         # decision-steps of per-episode runway (offroute/noprogress/stuck suppressed)
+  #                          so the agent gets ~2s to act before a detector can kill the episode
 
 detector:
   # When to END an episode (and run recovery). Route-aware checks need centerline.npy.
