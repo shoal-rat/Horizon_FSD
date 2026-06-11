@@ -35,6 +35,7 @@ import numpy as np
 from capture import ScreenCapture
 from config import load_config
 from hitl import countdown
+from racing_line import RacingLineReader
 from telemetry_receiver import TelemetryReceiver
 
 SOURCE_W, SOURCE_H = 320, 180        # 16:9 color source frames; obs are derived offline
@@ -95,11 +96,15 @@ def main() -> int:
 
     # buffers
     keys = ("frames_jpeg", "actions", "speed", "accel", "surface_rumble",
-            "tire_slip", "is_race_on", "distance", "timestamp_ms", "position")
+            "tire_slip", "is_race_on", "distance", "timestamp_ms", "position", "brightness")
     buf: dict[str, list] = {k: [] for k in keys}
     shard_idx = 0
     total = 0
     skipped = 0
+    # AUTO day/night: lighting is identified PER FRAME (scene brightness in the line ROI), so one
+    # session can sweep FH6's whole day/night cycle - no separate day/night recording or training.
+    line_reader = RacingLineReader()
+    lighting_counts = {"day": 0, "dusk": 0, "night": 0}
 
     def save_shard() -> None:
         nonlocal shard_idx
@@ -120,6 +125,7 @@ def main() -> int:
             distance=np.asarray(buf["distance"], dtype=np.float32),
             timestamp_ms=np.asarray(buf["timestamp_ms"], dtype=np.uint32),
             position=np.asarray(buf["position"], dtype=np.float32),   # (N,3) world x,y,z for centerline/route
+            brightness=np.asarray(buf["brightness"], dtype=np.float32),  # per-frame scene lighting (auto day/night)
             quality=quality,
         )
         print(f"  [shard] {path}  ({len(buf['actions'])} samples)")
@@ -154,6 +160,8 @@ def main() -> int:
                 skipped += 1
                 continue
             buf["frames_jpeg"].append(enc.tobytes())
+            buf["brightness"].append(line_reader.scene_brightness(frame))
+            lighting_counts[line_reader.classify_lighting(frame)] += 1
             buf["actions"].append([t.steer_norm, t.throttle, t.brake])
             buf["speed"].append(t.speed)
             buf["accel"].append([t.acceleration_x, t.acceleration_y, t.acceleration_z])
@@ -176,8 +184,9 @@ def main() -> int:
                     return 2
 
             if total % int(args.hz) == 0:
+                light = line_reader.classify_lighting(frame)
                 print(f"  {total:6d} samples  speed={t.speed_kmh:6.1f} km/h  "
-                      f"steer={t.steer_norm:+.2f} throttle={t.throttle:.2f} brake={t.brake:.2f}")
+                      f"steer={t.steer_norm:+.2f} throttle={t.throttle:.2f} brake={t.brake:.2f}  [{light}]")
             if len(buf["frames_jpeg"]) >= args.shard_size:
                 save_shard()
     except KeyboardInterrupt:
@@ -188,6 +197,8 @@ def main() -> int:
         rx.close()
 
     elapsed = time.perf_counter() - t_start
+    lit_total = max(1, sum(lighting_counts.values()))
+    lighting_mix = {k: round(v / lit_total, 3) for k, v in lighting_counts.items()}
     meta = {
         "quality": quality,
         "tag": args.tag,
@@ -195,6 +206,7 @@ def main() -> int:
         "hz": args.hz,
         "frame_format": f"jpeg_bgr_{SOURCE_W}x{SOURCE_H}_q{JPEG_QUALITY}",
         "cam": "chase",                  # racing_line.py's ROI is calibrated for the chase cam
+        "lighting_mix": lighting_mix,    # AUTO-detected per frame; mixed sessions are fine
         "samples": total,
         "skipped": skipped,
         "shards": shard_idx,
@@ -205,6 +217,8 @@ def main() -> int:
 
     print("\n" + "=" * 72)
     print(f" DONE  {total} samples in {shard_idx} shard(s), {skipped} skipped, {elapsed:.1f}s")
+    print(f" lighting (auto): day {lighting_mix['day']:.0%} / dusk {lighting_mix['dusk']:.0%} / "
+          f"night {lighting_mix['night']:.0%}")
     print(f" -> {session_dir}")
     print("=" * 72)
     return 0

@@ -178,6 +178,7 @@ def main() -> int:
 
     sessions = sorted(d for d in glob.glob(os.path.join(base, "*")) if os.path.isdir(d))
     n_eps, n_steps = 0, 0
+    lighting = {"day": 0, "dusk": 0, "night": 0}   # corpus mix, auto-detected per frame at record time
     for sd in sessions:
         s = ds_mod.load_session(sd)
         if s is None:
@@ -214,8 +215,23 @@ def main() -> int:
             n_steps += L - 1
             kept += 1
         tag = "demo" if is_demo else f"wsx (bang-bang {bang_frac:.0%})" if bang_frac > args.bang_bang_max else "wsx (autodrive)"
-        print(f"  {sess}: {kept} episodes [{tag}]")
+        light_str = ""
+        if "brightness" in s:                          # auto day/night mix (per-frame, from record time)
+            b = np.asarray(s["brightness"], np.float32)[valid]
+            day, dusk = float((b >= 85).mean()), float(((b >= 52) & (b < 85)).mean())
+            lighting["day"] += int(day * len(b)); lighting["dusk"] += int(dusk * len(b))
+            lighting["night"] += int((1 - day - dusk) * len(b))
+            light_str = f"  day {day:.0%}/dusk {dusk:.0%}/night {1 - day - dusk:.0%}"
+        print(f"  {sess}: {kept} episodes [{tag}]{light_str}")
     print(f"\nDONE: {n_eps} episodes, ~{n_steps} steps @{20 // stride}Hz -> {out}")
+    lit_total = sum(lighting.values())
+    if lit_total:
+        mix = {k: v / lit_total for k, v in lighting.items()}
+        print("corpus lighting (auto-detected): day %.0f%% / dusk %.0f%% / night %.0f%%"
+              % (100 * mix["day"], 100 * mix["dusk"], 100 * mix["night"]))
+        if mix["night"] + mix["dusk"] < 0.2:
+            print("  [!] under 20%% low-light data - record some night driving (or one long AutoDrive "
+                  "session through the in-game day/night cycle) so the model sees both.")
     return 0
 
 

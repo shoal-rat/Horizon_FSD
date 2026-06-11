@@ -52,6 +52,14 @@ class TestRacingLineDayNight(unittest.TestCase):
         rd = RacingLineReader().read(np.full((4, 4, 3), 120, np.uint8))
         self.assertEqual(rd.confidence, 0.0)
 
+    def test_auto_lighting_classification(self):
+        # the AUTO day/night identifier: per-frame, so mixed sessions need no manual labels
+        r = RacingLineReader()
+        self.assertEqual(r.classify_lighting(np.full((180, 320, 3), 150, np.uint8)), "day")
+        self.assertEqual(r.classify_lighting(np.full((180, 320, 3), 70, np.uint8)), "dusk")
+        self.assertEqual(r.classify_lighting(np.full((180, 320, 3), 35, np.uint8)), "night")
+        self.assertAlmostEqual(r.scene_brightness(np.full((180, 320, 3), 150, np.uint8)), 150.0, delta=1.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

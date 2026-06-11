@@ -186,6 +186,13 @@ for the reward head). The recorder stores 320×180 color source frames, and demo
 get their `line(3)` **backfilled with the same reader the live env runs** — demo and live
 channels match exactly, in any light.
 
+**Lighting is identified automatically, per frame** — no separate day/night recording or
+training. The recorder logs each frame's scene brightness and prints the session's
+day/dusk/night mix; `make_warmstart` reports the corpus mix (and warns under 20%
+low-light). One long session through FH6's own day/night cycle (e.g. an AFK AutoDrive
+run) covers every lighting condition in a single recording; everything goes into one
+corpus and one model.
+
 ## Repository layout
 
 ```text

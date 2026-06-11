@@ -38,7 +38,7 @@ DEFAULT_DATASET = {
 
 _SCALAR_KEYS = ("actions", "speed", "accel", "surface_rumble",
                 "tire_slip", "is_race_on", "distance")
-_OPTIONAL_KEYS = ("position",)
+_OPTIONAL_KEYS = ("position", "brightness")
 
 
 class LazyJpegFrames:

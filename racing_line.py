@@ -72,6 +72,28 @@ class RacingLineReader:
     def __init__(self, cfg: RacingLineConfig | None = None) -> None:
         self.cfg = cfg or RacingLineConfig()
 
+    def scene_brightness(self, frame_bgr: np.ndarray) -> float:
+        """Mean grey of the line ROI - the per-frame lighting scalar the day/night decision uses."""
+        c = self.cfg
+        if frame_bgr.ndim == 3 and frame_bgr.shape[2] == 4:
+            frame_bgr = frame_bgr[:, :, :3]
+        H, W = frame_bgr.shape[:2]
+        roi = frame_bgr[int(c.roi_y[0] * H):int(c.roi_y[1] * H),
+                        int(c.roi_x[0] * W):int(c.roi_x[1] * W)]
+        if roi.size == 0:
+            return 0.0
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if roi.ndim == 3 else roi
+        return float(gray.mean())
+
+    def classify_lighting(self, frame_bgr: np.ndarray) -> str:
+        """'day' / 'dusk' / 'night' for THIS frame - the auto day/night identification. Per-frame,
+        so a single recording session can sweep FH6's whole day/night cycle and just be thrown into
+        one corpus: nothing downstream needs day and night separated."""
+        b = self.scene_brightness(frame_bgr)
+        if b >= self.cfg.min_scene_brightness:
+            return "day"
+        return "dusk" if b >= (self.cfg.min_scene_brightness + self.cfg.min_night_brightness) / 2 else "night"
+
     def _masks(self, frame_bgr: np.ndarray):
         c = self.cfg
         if frame_bgr.ndim == 3 and frame_bgr.shape[2] == 4:   # BGRA (live grab) -> BGR
