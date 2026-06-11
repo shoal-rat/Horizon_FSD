@@ -16,27 +16,20 @@ capture:                   # windows-capture (Windows.Graphics.Capture) backend
   monitor_index: 1         # 1-based monitor (1 = primary); ignored if window_name set
   window_name: null        # capture a specific window by title (e.g. "Forza Horizon 6"), or null
   region: null             # [left, top, right, bottom] in captured pixels, or null for full
-  img_width: 84            # downscaled observation width
-  img_height: 84           # downscaled observation height
-  grayscale: true
-  frame_stack: 4           # number of recent frames in the observation stack
+  img_width: 84            # (legacy preview tools only; the RL obs is 64x64 from the dreamer config)
+  img_height: 84
+  grayscale: false         # COLOR obs: the racing-line chevrons keep their semantics in the image
+  #                          (in gray, blue->luma 29 / red->76 - both inside the asphalt range), so
+  #                          the model can SEE the line day AND night. Demos must be color too
+  #                          (make_warmstart skips legacy gray sessions; record.py stores color).
+  max_frame_age_s: 1.5     # frozen-render threshold (load screen / alt-tab) -> benign frame_lost
   cursor_capture: false    # include the mouse cursor in frames
-
-env:                       # rtgym real-time loop (mirrors tmrl)
-  time_step_duration: 0.05 # control step in seconds (20 Hz)
-  start_obs_capture: 0.04  # when within the step to grab the observation
-  act_buf_len: 4           # past actions appended to the observation (sensing+actuation delay)
-  ep_max_length: 2000      # truncate episodes after N steps
 
 action:
   # continuous action = [steer in -1..1, throttle in 0..1, brake in 0..1]
   steer_range: [-1.0, 1.0]
   throttle_range: [0.0, 1.0]
   brake_range: [0.0, 1.0]
-
-reward:
-  # placeholder - reward.py will host swappable functions (Phase 1+).
-  type: "forward_speed"
 
 rl_reward:
   speed_cap: 40.0
@@ -49,10 +42,6 @@ rl_reward:
   align_min_speed: 1.5      # below this, velocity direction is too noisy to trust
   cross_w: 0.3              # small lateral-distance penalty (pull to centre)
   penalty_cap: 1.5          # per-step cap on offroad/slip penalties (crash penalty stays dominant)
-
-rl_route:                   # route-geometry obs (light-invariant path preview, GT-Sophy style)
-  lookahead_spacing_m: 8.0  # arc spacing of the 10 lookahead points (80 m preview)
-  heading_min_speed: 2.0    # below this, velocity direction is noise -> heading invalid (flag 0)
   boot_w: 0.3
   offroad_rumble: 0.15
   offroad_w: 2.0
@@ -70,6 +59,10 @@ rl_route:                   # route-geometry obs (light-invariant path preview, 
   low_speed_steer_speed: 5.0
   brake_w: 0.03
   launch_w: 0.04
+
+rl_route:                   # route-geometry obs (light-invariant path preview, GT-Sophy style)
+  lookahead_spacing_m: 8.0  # arc spacing of the 10 lookahead points (80 m preview)
+  heading_min_speed: 2.0    # below this, velocity direction is noise -> heading invalid (flag 0)
 
 rl_safety:
   # Runtime guardrails for early live RL. These clamp only the gamepad command,
@@ -125,50 +118,18 @@ recovery_demos:
   # Save smooth, non-teleport AutoDrive recoveries as Dreamer replay episodes.
   # Teleport/prompt recoveries are used to keep training alive but are not teachable.
   enabled: true
-  out_dir: "C:/Horizon_FSD/dreamer_logs/forza/train_eps"
+  out_dir: "C:/Horizon_FSD/dreamer_logs/forza/recovery_eps"   # sibling dir: train_eps purges don't sweep it
   min_len: 16
   max_len: 1200
   sample_hz: 10.0
   teleport_jump_m: 30.0
 
-bc:                           # Phase 3 behavioral cloning
-  backbone: "resnet18"        # timm backbone (e.g. resnet18, efficientnet_b0)
-  pretrained: true            # ImageNet-pretrained weights (first conv adapted to 4 chans)
-  freeze_backbone: false      # train only the head if true
-  hidden: 256                 # MLP head width
-  dropout: 0.1
-  epochs: 25
-  batch_size: 128
-  lr: 0.0003
-  weight_decay: 0.0001
-  num_workers: 0              # 0 on Windows (frames already in RAM)
-  speed_norm: 100.0           # divide speed (m/s) by this for the scalar input
-  # --- steering head: classification over bins (0 = old MSE-tanh regression) ---
-  steer_bins: 21              # softmax bins over [-1,1]; stops MSE averaging to straight
-  steer_bin_power: 1.5        # >1 packs bins denser near 0 (fine control near center)
-  # --- loss weighting ---
-  loss_corner_k: 4.0          # per-sample weight = 1 + k*|steer| (emphasize corners)
-  w_steer: 1.0                # weight on steering loss (cross-entropy)
-  w_throttle_brake: 5.0       # weight on throttle/brake MSE (balances vs CE scale)
-  # --- augmentation (recovery via PilotNet-style speed-aware shift) ---
-  aug_flip: true              # random L-R flip (negate steer) - symmetrizes steering
-  aug_brightness: 0.2         # +/- brightness jitter fraction
-  aug_shift_px: 8             # max horizontal shift (px); sampled ~N(0,sigma), most small
-  aug_shift_sigma: 4.0        # std of the shift distribution (mass near 0 = small offsets)
-  aug_steer_per_px: 0.02      # base steer correction per shifted pixel
-  aug_speed_ref: 20.0         # m/s: correction scaled by speed_ref/speed (gentler when fast)
-  aug_speed_min: 5.0          # m/s floor so low-speed correction doesn't blow up
-
-dataset:                      # Phase 2 BC dataset filtering/balancing
-  frame_stack: 4              # frames per stacked sample (match capture.frame_stack)
+dataset:                      # recording-session frame filters (make_warmstart)
   min_speed: 1.0              # drop frames slower than this (m/s) - parked/idle
   crash_speed_drop: 3.0       # speed drop (m/s) within one 0.05s step => impact
   crash_accel: 60.0           # |acceleration| (m/s^2) spike => impact (normal p99~19)
   crash_window: 8             # frames dropped on each side of an impact (~0.4s)
   max_tire_slip: 8.0          # drop frames with extreme wheelspin/slide (keeps dirt driving)
-  straight_steer_thresh: 0.05 # |steer| below this = "straight"
-  max_straight_frac: 0.5      # straights at most this fraction after balancing
-  val_frac: 0.1               # last fraction of each session (by time) => validation
   autodrive_surface_rumble: 0.15  # extra off-road filter, autodrive-quality sessions only
 
 paths:

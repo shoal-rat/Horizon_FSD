@@ -63,9 +63,10 @@ class ForzaDriveEnv:
         self.reward_range = [-np.inf, np.inf]
 
         cap, tel = cfg["capture"], cfg["telemetry"]
-        # Color is a CONFIG SWITCH (capture.grayscale in config.yaml). Keep GRAY until 2-3 COLOR demo
-        # sessions exist: a replicated-gray demo corpus next to color live frames is a perfect
-        # demo/live discriminator handed to the reward head (see docs). Flip + rebuild ws together.
+        # COLOR obs (capture.grayscale: false): grayscale physically erased the racing-line chevrons
+        # (blue->luma 29, red->76, both inside the asphalt range), forcing day-only stopgaps. In color
+        # the model sees the line itself, day AND night. Demos must be color too - make_warmstart
+        # skips legacy gray sessions rather than shipping a gray/color demo-vs-live discriminator.
         self.grayscale = bool(cap.get("grayscale", True))
         self.channels = 1 if self.grayscale else 3
         self.capture = ScreenCapture(

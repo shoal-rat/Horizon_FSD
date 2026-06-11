@@ -1,0 +1,14 @@
+{
+  "quality": "autodrive",
+  "session": "20260606_043009",
+  "hz": 20.0,
+  "img_size": [
+    84,
+    84
+  ],
+  "grayscale": true,
+  "samples": 12000,
+  "skipped": 0,
+  "shards": 12,
+  "seconds": 600.4
+}

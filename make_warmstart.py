@@ -33,6 +33,7 @@ from action_utils import apply_steer_limit, exclusive_pedals, physical_to_model_
 from centerline import ROUTE_DIM, route_features
 import dataset as ds_mod
 from config import load_config
+from racing_line import RacingLineReader
 from reward import DriveReward, DriveRewardConfig
 
 
@@ -101,10 +102,19 @@ def _episode_from_run(s: dict, run: np.ndarray, reward_fn, size, stride: int, st
                and np.ptp(pos[run, 0]) + np.ptp(pos[run, 2]) > 1.0)
     cl = getattr(reward_fn, "_centerline", None)
     route = np.zeros((L, ROUTE_DIM), np.float32)
+    # racing-line obs: BACKFILLED from the color source frames with the SAME day/night-adaptive
+    # reader the live env runs - demos and live now carry an identical line channel in any light
+    # (legacy gray sessions can't provide it, but those are skipped under the color target anyway).
+    line = np.zeros((L, 3), np.float32)
+    line_reader = RacingLineReader() if channels == 3 else None
 
     for t in range(L):
-        image[t] = _obs_frame(frames[idx[t]], H, W, channels)
+        src = frames[idx[t]]
+        image[t] = _obs_frame(src, H, W, channels)
         spd[t, 0] = speed[idx[t]]
+        if line_reader is not None and getattr(src, "ndim", 2) == 3:
+            r = line_reader.read(src)
+            line[t] = (r.cue, r.offset, r.confidence)
         if t >= 1:                                 # decision held INTO obs[t] = action at the window start
             act[t] = physical_to_model_action(applied_full[(t - 1) * stride])
             rew[t] = float(r_tick[(t - 1) * stride + 1: t * stride + 1].sum())
@@ -123,10 +133,7 @@ def _episode_from_run(s: dict, run: np.ndarray, reward_fn, size, stride: int, st
         "image": image, "speed": spd, "action": act, "reward": rew,
         "is_first": is_first, "is_terminal": np.zeros((L,), bool),
         "discount": np.ones((L,), np.float32),
-        # recordings are grayscale (no colour) so the racing-line cue is unavailable here;
-        # give a neutral, zero-confidence reading. The model learns the line from live
-        # episodes (where it's detected) and to ignore it when confidence is 0.
-        "line": np.zeros((L, 3), np.float32),
+        "line": line,
         "route": route,
         # live episodes carry a 'logprob' from the policy; demos have none, so add zeros
         # to keep every episode's keys identical (the batch stacker requires it).
@@ -147,6 +154,11 @@ def main() -> int:
     p.add_argument("--bang-bang-max", type=float, default=0.05,
                    help="Sessions with more than this fraction of full-lock steer (keyboard play) are "
                         "DEMOTED to wsx-*: world-model food, but excluded from BC/demo-oversampling.")
+    p.add_argument("--autodrive-as-demo", action="store_true",
+                   help="Let ANNA AutoDrive sessions teach the POLICY too (ws-*). Default keeps them "
+                        "wsx-* (world model + reward head only): ANNA's steering telemetry is real and "
+                        "smooth, but it's ~90%% straight-line driving and contains zero recovery "
+                        "content - useful dynamics, weak steering teacher.")
     args = p.parse_args()
 
     cfg = load_config(args.config)
@@ -186,7 +198,8 @@ def main() -> int:
         # collapse seen live) are demoted to wsx-*: still world-model food, never policy targets.
         steer_v = np.abs(np.asarray(s["actions"], np.float32)[valid, 0])
         bang_frac = float((steer_v > 0.99).mean())
-        is_demo = (not sess.startswith("autodrive")) and bang_frac <= args.bang_bang_max
+        is_demo = ((args.autodrive_as_demo or not sess.startswith("autodrive"))
+                   and bang_frac <= args.bang_bang_max)
         prefix = "ws" if is_demo else "wsx"
         runs = np.split(valid, np.where(np.diff(valid) > 1)[0] + 1)
         kept = 0

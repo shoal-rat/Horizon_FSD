@@ -65,8 +65,12 @@ def _load_config(config_names: list[str], remaining: list[str], logdir: str | No
 
 def _spaces(config):
     h, w = int(config.size[0]), int(config.size[1])
+    # channels follow the SAME switch the live env and make_warmstart use (config.yaml
+    # capture.grayscale), so the offline pretrain can't drift from the episodes on the color flip
+    from config import load_config
+    channels = 1 if bool(load_config(None).get("capture", {}).get("grayscale", True)) else 3
     obs_space = gym.spaces.Dict({
-        "image": gym.spaces.Box(0, 255, (h, w, 1), dtype=np.uint8),
+        "image": gym.spaces.Box(0, 255, (h, w, channels), dtype=np.uint8),
         "speed": gym.spaces.Box(0.0, np.inf, (1,), dtype=np.float32),
         "line": gym.spaces.Box(-1.0, 1.0, (3,), dtype=np.float32),
         "route": gym.spaces.Box(-1.0, 1.0, (ROUTE_DIM,), dtype=np.float32),

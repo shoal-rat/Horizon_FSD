@@ -1,5 +1,5 @@
 diff --git a/configs.yaml b/configs.yaml
-index 8d8d7ae..9faf026 100644
+index 8d8d7ae..9aa9dc3 100644
 --- a/configs.yaml
 +++ b/configs.yaml
 @@ -18,6 +18,7 @@ defaults:
@@ -24,7 +24,7 @@ index 8d8d7ae..9faf026 100644
 +  pretrain: 200             # warm actor/reward head before the car takes live control
 +  action_repeat: 2          # 10Hz effective control
 +  time_limit: 1200          # //action_repeat -> 600 decisions (~60s episodes @10Hz)
-+  grayscale: True
++  grayscale: False
 +  prefill: 2500             # warm-start episodes count toward this (live prefill skipped if covered)
 +  train_ratio: 4            # was 8: half the training load -> less GPU contention -> smoother driving
 +  compile: False
@@ -58,7 +58,7 @@ index 8d8d7ae..9faf026 100644
 +  pretrain: 200
 +  action_repeat: 2          # keep 10Hz CONTROL - more capture FPS does NOT help a 10Hz loop
 +  time_limit: 1200
-+  grayscale: True
++  grayscale: False
 +  prefill: 2500
 +  train_ratio: 64           # was 4 -> the PRIMARY accuracy/"more frames used" lever (try 128 if the
 +  #                           async learner sustains it: learner_steps/env_step must keep up)

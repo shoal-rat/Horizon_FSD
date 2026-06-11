@@ -1,0 +1,14 @@
+{
+  "quality": "manual",
+  "session": "20260606_231036",
+  "hz": 20.0,
+  "img_size": [
+    84,
+    84
+  ],
+  "grayscale": true,
+  "samples": 2361,
+  "skipped": 40,
+  "shards": 3,
+  "seconds": 120.2
+}

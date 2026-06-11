@@ -43,7 +43,8 @@ reference route with day/night/snow conditions.
 ```text
 FH6 (chase cam) ----- screen ----> capture.py (WGC, color full-res)
    |                                  |-- racing_line.py --> line(3)  [day/night-adaptive HSV cue]
-   |                                  '-- preprocess -----> image 64x64 (gray today; color is a config flip)
+   |                                  '-- preprocess -----> image 64x64x3 COLOR (the chevrons keep
+   |                                      their semantics in the obs - the model sees the line itself)
    '-- Data Out UDP -> telemetry_receiver.py / forza_telemetry.py (finite-checked, freshness-clocked)
                                       |-- speed(1)
                                       '-- centerline.py route_features --> route(27)
@@ -100,6 +101,10 @@ episodes are all labeled by the same `DriveReward`; changing the reward requires
 1. record.py        you drive (ANALOG gamepad, chase cam) -> 320x180 JPEG COLOR source
                     frames @20 Hz + full telemetry incl. world position. Sessions are
                     quality-gated (a bang-bang/full-lock steering check aborts keyboard play).
+                    ANNA AutoDrive sessions (record.py --autodrive, AFK) are valid data too:
+                    telemetry logs ANNA's real steering/throttle/brake. By default they feed
+                    the world model + reward head only (wsx-*); --autodrive-as-demo opts them
+                    into the policy teachers.
 2. make_warmstart   recordings -> Dreamer replay @10 Hz (stride-2: demos and live MUST
                     share one timescale), actions actuator-clamped (the same steer limit
                     the live env applies), rewards accumulated per decision window exactly
@@ -160,18 +165,26 @@ with a test:
 - *96×96 obs*: only in `forza_full` on a freed GPU, and only if decoder reconstructions
   show the road edge unresolved AND offroute deaths cluster at high-speed sweepers.
 
-## Day/night
+## Day/night — one strategy, in color
 
-- The **route vector** and the whole reward are telemetry-based: identical in the dark.
-- The **racing-line reader** is day/night-adaptive: by scene brightness it either trusts
-  all chevron colours (day) or drops blue — moonlit snow reads as false blue — and trusts
-  only the warm cues at reduced confidence (night). Worst case is over-cautious braking,
-  never a false "accelerate into a corner".
-- The **image obs** is gray today. Color is wired as a config switch
-  (`capture.grayscale: false`) but deliberately **off until 2–3 color demo sessions
-  exist**: replicated-gray demos next to color live frames would hand the reward head a
-  perfect demo/live discriminator. New recordings already store color source frames, so
-  the flip needs no recorder change — just demos + `make_warmstart` + flip together.
+The obs is **64×64×3 color** (`capture.grayscale: false`). Grayscale physically erased
+the chevron semantics (blue → luma 29, red → 76, both inside the asphalt's 38–144 range),
+which is what forced the old day-only stopgaps. In color the model sees the racing line
+*in the image itself*, day and night — the night chevrons are headlight-lit and clearly
+visible in color captures.
+
+Three redundant signals, all day/night-capable (redundancy is how GT Sophy-class systems
+work):
+- **image (color)** — the line, the road, the scene, as the model sees it;
+- **line(3)** — the full-res HSV chevron read (higher-res than the 64×64 obs sees), with
+  the night mode that drops snow-prone blue and trusts the warm cues;
+- **route(27)** + the whole reward — pure telemetry, identical in the dark.
+
+One consequence, by design: demos must be color. `make_warmstart` *skips* legacy gray
+sessions rather than shipping a replicated-gray corpus (a perfect demo/live discriminator
+for the reward head). The recorder stores 320×180 color source frames, and demo episodes
+get their `line(3)` **backfilled with the same reader the live env runs** — demo and live
+channels match exactly, in any light.
 
 ## Repository layout
 
